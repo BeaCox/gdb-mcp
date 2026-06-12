@@ -1,0 +1,29 @@
+{
+  "name": "gdb-mcp",
+  "version": "0.2.0",
+  "description": "Multi-session GDB and gdbserver debugging through MCP.",
+  "author": {
+    "name": "BeaCox",
+    "email": "root@beacox.space"
+  },
+  "homepage": "https://github.com/BeaCox/gdb-mcp",
+  "repository": "https://github.com/BeaCox/gdb-mcp",
+  "license": "MIT",
+  "keywords": [
+    "gdb",
+    "debugger",
+    "gdbserver",
+    "mcp"
+  ],
+  "mcpServers": {
+    "gdb": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "gdb-mcp"
+      ]
+    }
+  }
+}

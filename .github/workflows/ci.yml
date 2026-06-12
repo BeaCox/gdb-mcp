@@ -35,5 +35,13 @@ jobs:
       - name: Test
         run: uv run pytest --cov=gdb_mcp --cov-report=term-missing
 
+      - name: Validate plugin manifests
+        run: |
+          uv run python -m json.tool .claude-plugin/marketplace.json >/dev/null
+          uv run python -m json.tool .claude-plugin/plugin.json >/dev/null
+          uv run python -m json.tool .agents/plugins/marketplace.json >/dev/null
+          uv run python -m json.tool plugins/gdb-mcp/.codex-plugin/plugin.json >/dev/null
+          uv run python -m json.tool plugins/gdb-mcp/.mcp.json >/dev/null
+
       - name: Build
         run: uv build

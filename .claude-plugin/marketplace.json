@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "beacox",
+  "version": "1.0.0",
+  "description": "MCP servers and developer tools maintained by BeaCox.",
+  "owner": {
+    "name": "BeaCox",
+    "email": "root@beacox.space"
+  },
+  "plugins": [
+    {
+      "name": "gdb-mcp",
+      "description": "Multi-session GDB and gdbserver debugging through MCP.",
+      "author": {
+        "name": "BeaCox"
+      },
+      "category": "development",
+      "source": ".",
+      "homepage": "https://github.com/BeaCox/gdb-mcp"
+    }
+  ]
+}

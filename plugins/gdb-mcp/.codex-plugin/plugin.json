@@ -1,0 +1,37 @@
+{
+  "name": "gdb-mcp",
+  "version": "0.2.0",
+  "description": "Multi-session GDB and gdbserver debugging through MCP.",
+  "author": {
+    "name": "BeaCox",
+    "email": "root@beacox.space",
+    "url": "https://github.com/BeaCox"
+  },
+  "homepage": "https://github.com/BeaCox/gdb-mcp",
+  "repository": "https://github.com/BeaCox/gdb-mcp",
+  "license": "MIT",
+  "keywords": [
+    "gdb",
+    "debugger",
+    "gdbserver",
+    "mcp"
+  ],
+  "interface": {
+    "displayName": "GDB MCP",
+    "shortDescription": "Debug native programs with GDB.",
+    "longDescription": "Create isolated GDB sessions, control execution, manage breakpoints, and inspect threads, frames, variables, registers, and memory.",
+    "developerName": "BeaCox",
+    "category": "Development",
+    "capabilities": [
+      "MCP",
+      "Debugging"
+    ],
+    "websiteURL": "https://github.com/BeaCox/gdb-mcp",
+    "defaultPrompt": [
+      "Debug this native program with GDB.",
+      "Inspect the crash using GDB.",
+      "Connect to this gdbserver target."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

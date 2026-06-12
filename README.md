@@ -30,7 +30,98 @@ still growing.
 On macOS, running an inferior under GDB may require a correctly signed GDB build.
 Connecting to a remote `gdbserver` does not require local inferior launching.
 
-## Install
+## Quick Install
+
+Prerequisites:
+
+- Install [uv](https://docs.astral.sh/uv/).
+- Install GDB and ensure `gdb` is available on `PATH`.
+
+### Claude Code Plugin
+
+Add the repository as the `beacox` marketplace, then install the plugin:
+
+```bash
+claude plugin marketplace add BeaCox/gdb-mcp
+claude plugin install gdb-mcp@beacox
+```
+
+Update later with:
+
+```bash
+claude plugin marketplace update beacox
+claude plugin update gdb-mcp@beacox
+```
+
+### Codex Plugin
+
+```bash
+codex plugin marketplace add BeaCox/gdb-mcp --ref main
+codex plugin add gdb-mcp@beacox
+```
+
+Update later with:
+
+```bash
+codex plugin marketplace upgrade beacox
+codex plugin add gdb-mcp@beacox
+```
+
+### Universal Installer
+
+Once the package is published to PyPI:
+
+```bash
+uvx gdb-mcp --install
+```
+
+Until then, run the installer directly from GitHub:
+
+```bash
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@main \
+  gdb-mcp --install
+```
+
+The installer detects Claude Code and Codex. Select clients explicitly when needed:
+
+```bash
+gdb-mcp --install claude
+gdb-mcp --install claude,codex
+```
+
+Use direct MCP registration instead of marketplace plugins:
+
+```bash
+gdb-mcp --install --direct
+```
+
+Preview commands without changing client configuration:
+
+```bash
+gdb-mcp --install --dry-run
+gdb-mcp --list-clients
+```
+
+Uninstall:
+
+```bash
+gdb-mcp --uninstall
+gdb-mcp --uninstall --direct
+```
+
+While the repository is private, use an authenticated SSH source for direct
+registration:
+
+```bash
+uvx --from git+ssh://git@github.com/BeaCox/gdb-mcp.git@main \
+  gdb-mcp --install --direct \
+  --source git+ssh://git@github.com/BeaCox/gdb-mcp.git@main
+```
+
+Marketplace plugins use the public HTTPS source and are intended for the public
+repository.
+
+## Package Install
 
 From a checkout:
 
@@ -45,7 +136,7 @@ uv sync --extra dev
 uv run pytest
 ```
 
-## Configure
+## Manual Configuration
 
 Print a client-ready stdio configuration:
 
@@ -53,13 +144,21 @@ Print a client-ready stdio configuration:
 gdb-mcp --print-config
 ```
 
-Equivalent configuration:
+The generated configuration launches the package through `uvx`, so clients do not
+depend on a checkout-specific virtual environment.
+
+Equivalent Claude Code configuration:
 
 ```json
 {
   "mcpServers": {
     "gdb": {
-      "command": "/absolute/path/to/gdb-mcp"
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/BeaCox/gdb-mcp.git@main",
+        "gdb-mcp"
+      ]
     }
   }
 }

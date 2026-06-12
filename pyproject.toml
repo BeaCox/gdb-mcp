@@ -42,6 +42,10 @@ dev = [
 [project.scripts]
 gdb-mcp = "gdb_mcp.server:main"
 
+[project.urls]
+Repository = "https://github.com/BeaCox/gdb-mcp"
+Issues = "https://github.com/BeaCox/gdb-mcp/issues"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

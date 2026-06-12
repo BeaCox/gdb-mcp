@@ -7,4 +7,4 @@ try:
 except PackageNotFoundError:
     __version__ = "0+unknown"
 
-__all__ = ["__version__", "config", "mi", "server", "session"]
+__all__ = ["__version__", "config", "installer", "mi", "server", "session"]

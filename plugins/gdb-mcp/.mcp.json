@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "gdb": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/BeaCox/gdb-mcp.git@main",
+        "gdb-mcp"
+      ]
+    }
+  }
+}
