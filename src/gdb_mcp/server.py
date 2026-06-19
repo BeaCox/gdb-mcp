@@ -652,7 +652,7 @@ async def gdb_load_core(
             )
             created_session = True
         result = await session.execute(
-            f"-target-select core {c_escape(core_path)}",
+            f"target core {core_path}",
             timeout=timeout,
         )
         payload = _result(session, result)

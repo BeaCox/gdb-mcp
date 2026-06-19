@@ -337,7 +337,7 @@ class ServerContractTests(unittest.TestCase):
 
             commands = log_path.read_text(encoding="utf-8")
             self.assertIn("-target-attach 1234", commands)
-            self.assertIn('-target-select core "/tmp/core.sample"', commands)
+            self.assertIn('target core /tmp/core.sample', commands)
             self.assertIn("signal 0", commands)
             self.assertIn('-data-evaluate-expression "value + 1"', commands)
             self.assertIn('print value + 1', commands)
@@ -371,7 +371,7 @@ class ServerContractTests(unittest.TestCase):
             self.assertIn("commands 1", commands)
             self.assertIn("-target-detach", commands)
             self.assertIn("kill", commands)
-            self.assertIn('-target-select core "/tmp/core with spaces"', commands)
+            self.assertIn('target core /tmp/core with spaces', commands)
             self.assertIn("target record-full", commands)
             self.assertIn("info record", commands)
             self.assertIn("reverse-continue", commands)
