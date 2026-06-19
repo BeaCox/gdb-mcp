@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import time
 import uuid
@@ -40,6 +41,40 @@ def _remaining(deadline: float) -> float:
 
 def _mi_arguments(args: list[str]) -> str:
     return " ".join(c_escape(arg) for arg in args)
+
+
+def _mi_word(name: str, value: str) -> str:
+    if not value:
+        raise ValueError(f"{name} must not be empty")
+    if any(char.isspace() for char in value) or '"' in value:
+        raise ValueError(f"{name} must be a single unquoted GDB/MI argument")
+    return value
+
+
+_GDBSERVER_PORT_RE = re.compile(r"\bListening on port (?P<port>[0-9]+)\b", re.IGNORECASE)
+
+
+def gdbserver_target_endpoint(listen: str, banner: str) -> str:
+    """Return the endpoint GDB should connect to for a locally launched gdbserver."""
+
+    host: str | None = None
+    port = listen
+    if ":" in listen:
+        host, port = listen.rsplit(":", 1)
+        if host in {"", "0.0.0.0", "::", "[::]"}:
+            host = "localhost"
+        elif host.startswith("[") and host.endswith("]"):
+            host = host[1:-1]
+
+    match = _GDBSERVER_PORT_RE.search(banner)
+    if match is not None:
+        port = match.group("port")
+
+    if host:
+        return f"{host}:{port}"
+    if port.isdigit():
+        return f"localhost:{port}"
+    return listen.lstrip(":")
 
 
 def _truncate_text(value: str, limit: int) -> tuple[str, bool]:
@@ -230,6 +265,9 @@ class GdbSession:
     _recent_records: deque[MIRecord] = field(
         default_factory=lambda: deque(maxlen=500),
     )
+    _recent_commands: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=200),
+    )
 
     async def start(self, startup_timeout: float = 10.0) -> dict[str, Any]:
         if self.process is not None and self.process.returncode is None:
@@ -312,7 +350,7 @@ class GdbSession:
                 return result.to_dict(self.output_limit_chars)
         mode = "extended-remote" if extended else "remote"
         result = await self.execute(
-            f"-target-select {mode} {c_escape(endpoint)}",
+            f"-target-select {mode} {_mi_word('endpoint', endpoint)}",
             timeout=timeout,
         )
         if result.result_record and result.result_record.record_class != "error":
@@ -433,6 +471,10 @@ class GdbSession:
         records = list(self._recent_records)
         return [record.to_dict() for record in records[-max(0, limit) :]]
 
+    def recent_commands(self, limit: int = 100) -> list[dict[str, Any]]:
+        commands = list(self._recent_commands)
+        return commands[-max(0, limit) :]
+
     async def ensure_started(self) -> None:
         if self.process is None:
             await self.start()
@@ -482,6 +524,16 @@ class GdbSession:
         )
         self._pending[token] = pending
         self.last_activity_at = _wall_time()
+        self._recent_commands.append(
+            {
+                "token": token,
+                "command": display_command,
+                "mi_command": command,
+                "wait_for_stop": wait_for_stop,
+                "started_at": self.last_activity_at,
+                "timeout": timeout,
+            }
+        )
 
         try:
             async with self._write_lock:

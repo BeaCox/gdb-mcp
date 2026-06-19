@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a reproducible problem with gdb-mcp.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. For security issues, do not open a public issue; follow SECURITY.md.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include commands, tool calls, and target program details.
+      placeholder: |
+        1. Build ...
+        2. Start gdb-mcp ...
+        3. Call ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: gdb-mcp version or commit
+      placeholder: "0.2.0 or commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: gdb-version
+    attributes:
+      label: GDB version
+      placeholder: "gdb --version"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Linux distribution and kernel
+      placeholder: "Ubuntu 22.04, Linux 6.8"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or tool output
+      render: text

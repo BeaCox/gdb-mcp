@@ -1,0 +1,34 @@
+name: Feature request
+description: Suggest a new capability or workflow.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: What debugging workflow should gdb-mcp support better?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the tool, behavior, or documentation change you want.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: safety
+    attributes:
+      label: Safety impact
+      options:
+        - Read-only
+        - Target execution
+        - Target mutation or unsafe
+        - Unsure
+    validations:
+      required: true

@@ -1,0 +1,27 @@
+name: Support or platform question
+description: Ask about setup, Linux support, remote targets, or client configuration.
+title: "[Support]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Supported local debugging is Linux-first. macOS and Windows are best effort only as bridges to remote targets.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "Linux distro, GDB version, MCP client"
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      render: json

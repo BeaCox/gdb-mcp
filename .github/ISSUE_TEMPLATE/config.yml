@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/BeaCox/gdb-mcp/security/advisories/new
+    about: Report privately through GitHub Private Vulnerability Reporting.

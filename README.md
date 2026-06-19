@@ -1,19 +1,21 @@
 # gdb-mcp
 
+[![CI](https://github.com/BeaCox/gdb-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/BeaCox/gdb-mcp/actions/workflows/ci.yml)
+
 `gdb-mcp` is a multi-session [Model Context Protocol](https://modelcontextprotocol.io/)
 server for driving GDB through its machine interface (GDB/MI). Each session owns an
 isolated GDB process and can debug a local executable or connect to `gdbserver`.
 
-The project is currently beta quality. The protocol core, lifecycle handling, safety
-defaults, and tool schemas are tested; broader platform and remote-target coverage is
-still growing.
+The project is currently beta quality. Linux local debugging, protocol core,
+lifecycle handling, safety defaults, and tool schemas are tested; remote-target
+coverage is still growing.
 
 ## Highlights
 
 - Multiple isolated GDB sessions with explicit session IDs.
 - Token-routed asynchronous GDB/MI transport.
 - Concurrent interrupt support for long-running `run` and `continue` calls.
-- Local executable, existing `gdbserver`, and managed local `gdbserver` workflows.
+- Linux local executable, existing `gdbserver`, and managed local `gdbserver` workflows.
 - Structured tools for breakpoints, threads, frames, locals, registers, and memory.
 - Bounded tool output with truncation metadata.
 - `stdio`, Streamable HTTP, and legacy SSE transports.
@@ -23,12 +25,28 @@ still growing.
 ## Requirements
 
 - Python 3.10 or newer.
+- Linux for supported local debugging.
 - GDB available on `PATH`, or an explicit `gdb_path`.
 - Optional: `gdbserver` for remote or managed-server workflows.
 - A compatible MCP client.
 
-On macOS, running an inferior under GDB may require a correctly signed GDB build.
-Connecting to a remote `gdbserver` does not require local inferior launching.
+On Debian/Ubuntu Linux:
+
+```bash
+sudo apt-get install -y gcc gdb gdbserver
+```
+
+## Support Policy
+
+- Supported and tested: Linux local debugging with GDB and optional `gdbserver`.
+- Supported and tested: running the MCP server on Linux and connecting to remote
+  `gdbserver` targets.
+- Best effort: running the MCP server on macOS or Windows only as a client-side
+  bridge to a remote Linux or embedded target. Local inferior debugging on macOS
+  and Windows is not a supported target for this project.
+
+Platform-specific tools such as `gdb_attach`, `gdb_load_core`, and
+`gdb_memory_mappings` are designed and tested against Linux GDB behavior.
 
 ## Quick Install
 
@@ -36,6 +54,22 @@ Prerequisites:
 
 - Install [uv](https://docs.astral.sh/uv/).
 - Install GDB and ensure `gdb` is available on `PATH`.
+
+### From Git
+
+Until a PyPI package is published, install or run directly from the public Git
+repository:
+
+```bash
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@main gdb-mcp --install
+```
+
+For direct MCP registration instead of marketplace plugins:
+
+```bash
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@main \
+  gdb-mcp --install --direct
+```
 
 ### Claude Code Plugin
 
@@ -69,17 +103,10 @@ codex plugin add gdb-mcp@beacox
 
 ### Universal Installer
 
-Once the package is published to PyPI:
+After a PyPI package is published, the same installer can be run as:
 
 ```bash
 uvx gdb-mcp --install
-```
-
-Until then, run the installer directly from GitHub:
-
-```bash
-uvx --from git+https://github.com/BeaCox/gdb-mcp.git@main \
-  gdb-mcp --install
 ```
 
 The installer detects Claude Code and Codex. Select clients explicitly when needed:
@@ -108,18 +135,6 @@ Uninstall:
 gdb-mcp --uninstall
 gdb-mcp --uninstall --direct
 ```
-
-While the repository is private, use an authenticated SSH source for direct
-registration:
-
-```bash
-uvx --from git+ssh://git@github.com/BeaCox/gdb-mcp.git@main \
-  gdb-mcp --install --direct \
-  --source git+ssh://git@github.com/BeaCox/gdb-mcp.git@main
-```
-
-Marketplace plugins use the public HTTPS source and are intended for the public
-repository.
 
 ## Package Install
 
@@ -179,7 +194,7 @@ untrusted network without an authenticated reverse proxy and host-level isolatio
 2. Set breakpoints with `gdb_set_breakpoint`.
 3. Call `gdb_run`, `gdb_continue`, `gdb_step`, or `gdb_next`.
 4. Inspect state with `gdb_threads`, `gdb_backtrace`, `gdb_locals`,
-   `gdb_registers`, and `gdb_read_memory`.
+   `gdb_eval_expression`, `gdb_registers`, and `gdb_read_memory`.
 5. Call `gdb_close_session` when finished.
 
 For an existing remote target:
@@ -195,11 +210,17 @@ For an existing remote target:
 Pass the returned `session_id` to every subsequent operation. There is no implicit
 current session.
 
+See [examples/README.md](examples/README.md) for a complete Linux walkthrough and
+[TOOLS.md](TOOLS.md) for the full tool reference.
+Release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
+
 ## Tool Groups
 
 Session management:
 
 - `gdb_create_session`
+- `gdb_attach`
+- `gdb_load_core`
 - `gdb_connect_gdbserver`
 - `gdb_launch_gdbserver`
 - `gdb_list_sessions`
@@ -207,27 +228,69 @@ Session management:
 - `gdb_close_session`
 - `gdb_server_health`
 - `gdb_recent_events`
+- `gdb_recent_commands`
+- `gdb_session_diagnostics`
+- `gdb_close_idle_sessions`
 
 Execution:
 
 - `gdb_run`
+- `gdb_restart`
 - `gdb_continue`
 - `gdb_interrupt`
+- `gdb_signal`
+- `gdb_detach`
+- `gdb_kill`
 - `gdb_step`
 - `gdb_next`
 
-Breakpoints and inspection:
+Breakpoints:
 
 - `gdb_set_breakpoint`
+- `gdb_set_watchpoint`
+- `gdb_enable_breakpoint`
+- `gdb_disable_breakpoint`
+- `gdb_breakpoint_condition`
+- `gdb_breakpoint_commands`: set command-list actions. Requires unsafe mode.
 - `gdb_delete_breakpoint`
 - `gdb_list_breakpoints`
+
+Threads and frames:
+
 - `gdb_threads`
 - `gdb_select_thread`
 - `gdb_backtrace`
+- `gdb_thread_apply_all_backtrace`
 - `gdb_select_frame`
 - `gdb_locals`
+- `gdb_stack_arguments`
+- `gdb_frame_variables`
+
+Inspection:
+
+- `gdb_eval_expression`
+- `gdb_print`
+- `gdb_call_function`: call an inferior function. Requires unsafe mode.
+- `gdb_set_variable`: set an inferior variable. Requires unsafe mode.
+- `gdb_disassemble`
+- `gdb_disassemble_current_frame`
+- `gdb_current_location`
+- `gdb_source`
+- `gdb_find_source`
 - `gdb_registers`
 - `gdb_read_memory`
+- `gdb_write_memory`: write raw memory bytes. Requires unsafe mode.
+- `gdb_search_memory`
+- `gdb_read_c_string`
+- `gdb_shared_libraries`
+- `gdb_info_files`
+- `gdb_memory_mappings`
+
+Remote target support:
+
+- `gdb_set_remote_paths`
+- `gdb_detach_gdbserver`
+- `gdb_gdbserver_status`
 
 Advanced:
 
@@ -235,9 +298,27 @@ Advanced:
 
 ## Safety Model
 
-Dedicated tools are available by default. Raw GDB commands can invoke inferior
-functions, write process memory, load scripts, and execute shell commands, so
-`gdb_execute` requires an explicit opt-in:
+Dedicated tools are available by default, but they are not all equally safe:
+
+- Read-oriented tools such as `gdb_backtrace`, `gdb_locals`, `gdb_registers`,
+  `gdb_eval_expression`, `gdb_disassemble`, `gdb_source`, `gdb_read_memory`,
+  `gdb_read_c_string`, `gdb_info_files`, and `gdb_memory_mappings` can disclose
+  local source code, process memory, registers, loaded file paths, and secrets
+  visible to the debugged process.
+- Execution tools such as `gdb_run`, `gdb_continue`, `gdb_step`, `gdb_next`,
+  `gdb_interrupt`, `gdb_signal`, `gdb_detach`, `gdb_kill`, `gdb_attach`, and
+  `gdb_launch_gdbserver` can stop, resume, detach, kill, or otherwise affect
+  local processes.
+- `gdb_eval_expression` and `gdb_set_watchpoint` use a conservative safe-expression
+  filter by default. Expressions with assignments, increments/decrements, control
+  separators, or function calls are rejected. Use `gdb_execute` only when you
+  explicitly need unrestricted GDB behavior.
+- `gdb_call_function`, `gdb_set_variable`, `gdb_write_memory`, and
+  `gdb_breakpoint_commands` require unsafe mode because they can execute target
+  code, modify target state, or run arbitrary breakpoint actions.
+
+Raw GDB commands can invoke inferior functions, write process memory, load scripts,
+and execute shell commands, so `gdb_execute` requires an explicit opt-in:
 
 ```bash
 gdb-mcp --unsafe

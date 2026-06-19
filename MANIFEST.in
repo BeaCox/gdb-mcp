@@ -1,5 +1,8 @@
 include CONTRIBUTING.md
+include CHANGELOG.md
 include SECURITY.md
+include TOOLS.md
+recursive-include examples *.c *.md
 recursive-include .claude-plugin *.json
 recursive-include .agents *.json
 recursive-include plugins *.json

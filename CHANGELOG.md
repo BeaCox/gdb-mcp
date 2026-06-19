@@ -1,0 +1,35 @@
+# Changelog
+
+All notable changes to this project are documented here.
+
+## Unreleased
+
+### Added
+
+- Linux-first support policy for local GDB debugging.
+- Expanded MCP tool surface to 59 tools across session management, execution,
+  breakpoints, threads/frames, inspection, memory, remote targets, and diagnostics.
+- Dedicated unsafe-gated tools for inferior function calls, variable mutation,
+  memory writes, and breakpoint command lists.
+- Linux smoke coverage for local GDB, managed `gdbserver`, attach, core loading,
+  expression evaluation, disassembly, watchpoints, and process mappings.
+- Deterministic MCP tool-contract tests using the fake GDB/MI fixture.
+- `gdbserver` ephemeral port handling for `localhost:0`.
+- Public demo walkthrough and tool reference documentation.
+
+### Changed
+
+- Project metadata now advertises POSIX/Linux support instead of broad local
+  macOS/Windows support.
+- README installation instructions now target public Git-based usage until a PyPI
+  release is available.
+- Safety documentation now distinguishes read-oriented tools, target execution
+  tools, and unsafe-gated mutation tools.
+
+### Fixed
+
+- Fixed Linux `gdbserver` connection handling by avoiding quoted endpoint
+  arguments in `-target-select`.
+- Fixed managed `gdbserver` connections when `gdbserver` chooses an ephemeral port.
+- Fixed core loading by using `-target-select core <path>` for reliable Linux GDB
+  behavior.
