@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from gdb_mcp.session import GdbMcpError, GdbSession, SessionManager
+from gdb_mcp.mi import MIRecord
+from gdb_mcp.session import CommandResult, GdbMcpError, GdbSession, SessionManager
 
 
 class GdbSessionAsyncTests(unittest.TestCase):
@@ -63,6 +64,31 @@ class GdbSessionAsyncTests(unittest.TestCase):
                 commands,
             )
             self.assertNotIn("'\"'\"'", commands)
+
+    def test_command_result_compacts_full_hex_values(self) -> None:
+        result = CommandResult(
+            command="-break-list",
+            records=[],
+            result_record=MIRecord(
+                kind="result",
+                raw='1^done,bkpt={addr="0x0000000000401136"}',
+                token=1,
+                record_class="done",
+                results={
+                    "bkpt": {
+                        "addr": "0x0000000000401136",
+                        "script": "break *0x0000000000401136",
+                    },
+                    "locations": ["0x0000000000000000", "not-hex"],
+                },
+            ),
+        )
+
+        payload = result.to_dict()
+
+        self.assertEqual(payload["results"]["bkpt"]["addr"], "0x401136")
+        self.assertEqual(payload["results"]["bkpt"]["script"], "break *0x0000000000401136")
+        self.assertEqual(payload["results"]["locations"], ["0x0", "not-hex"])
 
     def test_startup_timeout_reaps_process(self) -> None:
         asyncio.run(self._test_startup_timeout())

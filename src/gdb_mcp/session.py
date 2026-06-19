@@ -52,6 +52,7 @@ def _mi_word(name: str, value: str) -> str:
 
 
 _GDBSERVER_PORT_RE = re.compile(r"\bListening on port (?P<port>[0-9]+)\b", re.IGNORECASE)
+_HEX_VALUE_RE = re.compile(r"0x[0-9a-fA-F]+")
 
 
 def gdbserver_target_endpoint(listen: str, banner: str) -> str:
@@ -129,6 +130,20 @@ def _truncate_value(value: Any, budget: int) -> tuple[Any, bool]:
     return value, False
 
 
+def _compact_hex_values(value: Any) -> Any:
+    """Shorten full-string hexadecimal values in nested MI payloads."""
+
+    if isinstance(value, str):
+        if _HEX_VALUE_RE.fullmatch(value):
+            return hex(int(value, 16))
+        return value
+    if isinstance(value, list):
+        return [_compact_hex_values(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _compact_hex_values(item) for key, item in value.items()}
+    return value
+
+
 @dataclass
 class CommandResult:
     command: str
@@ -199,7 +214,7 @@ class CommandResult:
                 raw_truncated,
             )
         )
-        return {
+        return _compact_hex_values({
             "ok": ok,
             "command": self.command,
             "result_class": result_class,
@@ -215,7 +230,7 @@ class CommandResult:
             "error": self.error,
             "truncated": truncated,
             "output_limit_chars": output_limit_chars,
-        }
+        })
 
 
 @dataclass
