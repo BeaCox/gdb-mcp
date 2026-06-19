@@ -2,7 +2,21 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased
+## [0.3.0] - 2026-06-19
+
+### Added
+
+- Lazy stdio proxy behavior for `gdb-mcp`: clients can discover the GDB tool
+  schema at MCP startup while the full backend starts or connects on first tool use.
+- `gdb-mcp-backend` for explicitly running the full backend, including HTTP and
+  SSE transports.
+
+### Changed
+
+- Claude Code and Codex plugin/direct configurations now use `gdb-mcp`, whose
+  default MCP behavior defers full backend startup until debugging tools are
+  actually used.
+- README and Linux walkthrough now describe the lazy, single-entry client model.
 
 ## [0.2.0] - 2026-06-19
 
