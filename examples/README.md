@@ -32,12 +32,12 @@ Call `gdb_create_session`:
 }
 ```
 
-Set a breakpoint:
+Set a breakpoint in the function that computes the result:
 
 ```json
 {
   "session_id": "<session_id>",
-  "location": "main"
+  "location": "add"
 }
 ```
 
@@ -50,12 +50,34 @@ Run to the breakpoint with `gdb_run`:
 }
 ```
 
-Inspect state:
+Inspect state with `gdb_current_location`:
 
 ```json
 {
   "session_id": "<session_id>"
 }
+```
+
+Expected location:
+
+```text
+function: add
+file: examples/hello.c
+```
+
+Inspect locals with `gdb_locals`:
+
+```json
+{
+  "session_id": "<session_id>"
+}
+```
+
+Expected locals:
+
+```text
+a = 2
+b = 40
 ```
 
 Useful inspection tools at this point:

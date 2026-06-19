@@ -151,6 +151,57 @@ uv sync --extra dev
 uv run pytest
 ```
 
+## Demo
+
+Build the included sample program on Linux:
+
+```bash
+cc -g -gdwarf-4 -O0 examples/hello.c -o /tmp/gdb-mcp-hello
+```
+
+Start `gdb-mcp`, then use your MCP client to call:
+
+```json
+{
+  "tool": "gdb_create_session",
+  "arguments": {
+    "program": "/tmp/gdb-mcp-hello"
+  }
+}
+```
+
+Set a breakpoint and run to it:
+
+```json
+{
+  "tool": "gdb_set_breakpoint",
+  "arguments": {
+    "session_id": "<session_id>",
+    "location": "add"
+  }
+}
+```
+
+```json
+{
+  "tool": "gdb_run",
+  "arguments": {
+    "session_id": "<session_id>",
+    "timeout": 10
+  }
+}
+```
+
+At the breakpoint, `gdb_current_location` reports `add` in `examples/hello.c`,
+and `gdb_locals` shows the current arguments:
+
+```text
+a = 2
+b = 40
+```
+
+Continue once more and the inferior exits with `value=42`.
+
 ## Manual Configuration
 
 Print a client-ready stdio configuration:

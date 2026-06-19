@@ -22,11 +22,14 @@ jobs:
       - name: Build distributions
         run: uv build
 
+      - name: Extract release notes
+        run: python .github/scripts/extract_release_notes.py CHANGELOG.md "$GITHUB_REF_NAME" release-notes.md
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes \
+            --notes-file release-notes.md \
             --verify-tag

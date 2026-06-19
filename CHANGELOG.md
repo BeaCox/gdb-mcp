@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+## [0.2.0] - 2026-06-19
+
 ### Added
 
 - Linux-first support policy for local GDB debugging.
