@@ -17,7 +17,7 @@ Safety levels:
 | --- | --- | --- | --- |
 | `gdb_create_session` | Mutation | `program`, `args`, `cwd`, `gdb_path` | Start an isolated GDB process. |
 | `gdb_attach` | Execution | `pid`, `program`, `session_id` | Attach to a local Linux process. |
-| `gdb_load_core` | Mutation | `core_path`, `program`, `session_id` | Load a Linux core file. `core_path` must be a single unquoted MI argument. |
+| `gdb_load_core` | Mutation | `core_path`, `program`, `session_id` | Load a Linux core file. Paths with spaces are quoted safely. |
 | `gdb_connect_gdbserver` | Mutation | `endpoint`, `program`, `extended`, `sysroot`, `solib_search_path` | Connect to an existing remote target. |
 | `gdb_launch_gdbserver` | Execution | `program`, `listen`, `target_endpoint`, `args` | Launch local `gdbserver` and connect to it. |
 | `gdb_list_sessions` | Read | none | List live sessions. |
@@ -40,6 +40,17 @@ Safety levels:
 | `gdb_step_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw` | Step into, then return compact context. |
 | `gdb_next` | Execution | `session_id`, `instruction` | Step over a line or instruction. |
 | `gdb_next_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw` | Step over, then return compact context. |
+| `gdb_start_recording` | Mutation | `session_id`, `method`, `timeout` | Enable GDB process recording for reverse debugging. |
+| `gdb_stop_recording` | Mutation | `session_id`, `timeout` | Stop an active GDB process recording target. |
+| `gdb_record_status` | Read | `session_id` | Return current recording status. |
+| `gdb_reverse_continue` | Execution | `session_id`, `timeout`, `auto_interrupt` | Run backward until the target stops. |
+| `gdb_reverse_continue_and_context` | Execution | `session_id`, `timeout`, `max_frames`, `include_raw` | Run backward, then return compact context. |
+| `gdb_reverse_step` | Execution | `session_id`, `instruction`, `timeout` | Step backward into a line or instruction. |
+| `gdb_reverse_step_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw` | Step backward into, then return compact context. |
+| `gdb_reverse_next` | Execution | `session_id`, `instruction`, `timeout` | Step backward over a line or instruction. |
+| `gdb_reverse_next_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw` | Step backward over, then return compact context. |
+| `gdb_reverse_finish` | Execution | `session_id`, `timeout` | Run backward to the call site of the selected frame. |
+| `gdb_reverse_finish_and_context` | Execution | `session_id`, `timeout`, `max_frames`, `include_raw` | Run backward to the caller, then return compact context. |
 | `gdb_detach` | Execution | `session_id` | Detach from the current target. |
 | `gdb_kill` | Execution | `session_id` | Kill the current inferior. |
 

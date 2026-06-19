@@ -638,7 +638,7 @@ async def gdb_load_core(
 
     created_session = False
     try:
-        _require_mi_word("core_path", core_path)
+        _require_cli_target("core_path", core_path)
         if program is not None:
             _require_single_line("program", program)
         if session_id:
@@ -652,7 +652,7 @@ async def gdb_load_core(
             )
             created_session = True
         result = await session.execute(
-            f"-target-select core {core_path}",
+            f"-target-select core {c_escape(core_path)}",
             timeout=timeout,
         )
         payload = _result(session, result)
@@ -865,6 +865,126 @@ async def gdb_next(
         return _result(
             session,
             await session.execute(command, timeout=timeout, wait_for_stop=True),
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=SESSION_MUTATION)
+async def gdb_start_recording(
+    session_id: str,
+    method: str = "full",
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Enable GDB process recording for reverse debugging."""
+
+    try:
+        commands = {
+            "full": "target record-full",
+            "btrace": "target record-btrace",
+        }
+        command = commands.get(method)
+        if command is None:
+            raise ValueError("method must be one of: full, btrace")
+        session = await manager.get(session_id)
+        return _result(session, await session.execute(command, timeout=timeout))
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=SESSION_MUTATION)
+async def gdb_stop_recording(session_id: str, timeout: float = 10.0) -> dict[str, Any]:
+    """Stop GDB process recording when a recording target is active."""
+
+    try:
+        session = await manager.get(session_id)
+        return _result(session, await session.execute("record stop", timeout=timeout))
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_record_status(session_id: str) -> dict[str, Any]:
+    """Return GDB recording status."""
+
+    try:
+        session = await manager.get(session_id)
+        return _result(session, await session.execute("info record", timeout=10.0))
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=TARGET_EXECUTION)
+async def gdb_reverse_continue(
+    session_id: str,
+    timeout: float = 30.0,
+    auto_interrupt: bool = True,
+) -> dict[str, Any]:
+    """Run backward until the target stops."""
+
+    try:
+        session = await manager.get(session_id)
+        result = await session.execute(
+            "reverse-continue",
+            timeout=timeout,
+            wait_for_stop=True,
+            auto_interrupt=auto_interrupt,
+        )
+        return _result(session, result)
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=TARGET_EXECUTION)
+async def gdb_reverse_step(
+    session_id: str,
+    instruction: bool = False,
+    timeout: float = 15.0,
+) -> dict[str, Any]:
+    """Step backward into one source line or machine instruction."""
+
+    try:
+        command = "reverse-stepi" if instruction else "reverse-step"
+        session = await manager.get(session_id)
+        return _result(
+            session,
+            await session.execute(command, timeout=timeout, wait_for_stop=True),
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=TARGET_EXECUTION)
+async def gdb_reverse_next(
+    session_id: str,
+    instruction: bool = False,
+    timeout: float = 15.0,
+) -> dict[str, Any]:
+    """Step backward over one source line or machine instruction."""
+
+    try:
+        command = "reverse-nexti" if instruction else "reverse-next"
+        session = await manager.get(session_id)
+        return _result(
+            session,
+            await session.execute(command, timeout=timeout, wait_for_stop=True),
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=TARGET_EXECUTION)
+async def gdb_reverse_finish(
+    session_id: str,
+    timeout: float = 15.0,
+) -> dict[str, Any]:
+    """Run backward to the call site of the selected frame."""
+
+    try:
+        session = await manager.get(session_id)
+        return _result(
+            session,
+            await session.execute("reverse-finish", timeout=timeout, wait_for_stop=True),
         )
     except Exception as exc:
         return _error(exc)
@@ -1370,6 +1490,113 @@ async def gdb_next_and_context(
         return await _collect_context(
             session_id,
             action="next",
+            execution=execution,
+            max_frames=max_frames,
+            include_raw=include_raw,
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=TARGET_EXECUTION)
+async def gdb_reverse_continue_and_context(
+    session_id: str,
+    timeout: float = 30.0,
+    auto_interrupt: bool = True,
+    max_frames: int = 10,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Run backward, then return a compact stop or exit summary."""
+
+    try:
+        _require_max_frames(max_frames)
+        execution = await gdb_reverse_continue(
+            session_id,
+            timeout=timeout,
+            auto_interrupt=auto_interrupt,
+        )
+        return await _collect_context(
+            session_id,
+            action="reverse-continue",
+            execution=execution,
+            max_frames=max_frames,
+            include_raw=include_raw,
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=TARGET_EXECUTION)
+async def gdb_reverse_step_and_context(
+    session_id: str,
+    instruction: bool = False,
+    timeout: float = 15.0,
+    max_frames: int = 10,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Step backward into one line or instruction, then return compact context."""
+
+    try:
+        _require_max_frames(max_frames)
+        execution = await gdb_reverse_step(
+            session_id,
+            instruction=instruction,
+            timeout=timeout,
+        )
+        return await _collect_context(
+            session_id,
+            action="reverse-step",
+            execution=execution,
+            max_frames=max_frames,
+            include_raw=include_raw,
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=TARGET_EXECUTION)
+async def gdb_reverse_next_and_context(
+    session_id: str,
+    instruction: bool = False,
+    timeout: float = 15.0,
+    max_frames: int = 10,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Step backward over one line or instruction, then return compact context."""
+
+    try:
+        _require_max_frames(max_frames)
+        execution = await gdb_reverse_next(
+            session_id,
+            instruction=instruction,
+            timeout=timeout,
+        )
+        return await _collect_context(
+            session_id,
+            action="reverse-next",
+            execution=execution,
+            max_frames=max_frames,
+            include_raw=include_raw,
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=TARGET_EXECUTION)
+async def gdb_reverse_finish_and_context(
+    session_id: str,
+    timeout: float = 15.0,
+    max_frames: int = 10,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Run backward to the caller, then return compact context."""
+
+    try:
+        _require_max_frames(max_frames)
+        execution = await gdb_reverse_finish(session_id, timeout=timeout)
+        return await _collect_context(
+            session_id,
+            action="reverse-finish",
             execution=execution,
             max_frames=max_frames,
             include_raw=include_raw,

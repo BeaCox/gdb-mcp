@@ -32,6 +32,15 @@ from gdb_mcp.server import (
     gdb_print,
     gdb_read_c_string,
     gdb_recent_commands,
+    gdb_record_status,
+    gdb_reverse_continue,
+    gdb_reverse_continue_and_context,
+    gdb_reverse_finish,
+    gdb_reverse_finish_and_context,
+    gdb_reverse_next,
+    gdb_reverse_next_and_context,
+    gdb_reverse_step,
+    gdb_reverse_step_and_context,
     gdb_search_memory,
     gdb_session_diagnostics,
     gdb_set_breakpoint,
@@ -42,7 +51,9 @@ from gdb_mcp.server import (
     gdb_signal,
     gdb_source,
     gdb_stack_arguments,
+    gdb_start_recording,
     gdb_step_and_context,
+    gdb_stop_recording,
     gdb_thread_apply_all_backtrace,
     gdb_write_memory,
     manager,
@@ -72,6 +83,17 @@ class ServerContractTests(unittest.TestCase):
             "gdb_kill",
             "gdb_restart",
             "gdb_signal",
+            "gdb_start_recording",
+            "gdb_stop_recording",
+            "gdb_record_status",
+            "gdb_reverse_continue",
+            "gdb_reverse_continue_and_context",
+            "gdb_reverse_step",
+            "gdb_reverse_step_and_context",
+            "gdb_reverse_next",
+            "gdb_reverse_next_and_context",
+            "gdb_reverse_finish",
+            "gdb_reverse_finish_and_context",
             "gdb_print",
             "gdb_call_function",
             "gdb_set_variable",
@@ -146,7 +168,6 @@ class ServerContractTests(unittest.TestCase):
             asyncio.run(gdb_eval_expression("missing", "puts(1)")),
             asyncio.run(gdb_eval_expression("missing", "value = 1")),
             asyncio.run(gdb_set_watchpoint("missing", "counter++")),
-            asyncio.run(gdb_load_core("/tmp/core with spaces", session_id="missing")),
             asyncio.run(gdb_print("missing", "puts(1)")),
         ]
         for result in results:
@@ -155,8 +176,12 @@ class ServerContractTests(unittest.TestCase):
         self.assertIn("call functions", results[0]["error"])
         self.assertIn("modify", results[1]["error"])
         self.assertIn("modify", results[2]["error"])
-        self.assertIn("single unquoted", results[3]["error"])
-        self.assertIn("call functions", results[4]["error"])
+        self.assertIn("call functions", results[3]["error"])
+
+    def test_core_path_rejects_multiline_input(self) -> None:
+        result = asyncio.run(gdb_load_core("/tmp/core\nbad", session_id="missing"))
+        self.assertFalse(result["ok"])
+        self.assertIn("line breaks", result["error"])
 
     def test_unsafe_dedicated_tools_are_disabled_by_default(self) -> None:
         previous = runtime_config.allow_unsafe_execute
@@ -193,7 +218,27 @@ class ServerContractTests(unittest.TestCase):
                 self.assertTrue(
                     (await gdb_load_core("/tmp/core.sample", session_id=session_id))["ok"]
                 )
+                self.assertTrue(
+                    (await gdb_load_core("/tmp/core with spaces", session_id=session_id))[
+                        "ok"
+                    ]
+                )
                 self.assertTrue((await gdb_signal(session_id, "0"))["ok"])
+                self.assertTrue((await gdb_start_recording(session_id))["ok"])
+                self.assertTrue((await gdb_record_status(session_id))["ok"])
+                self.assertTrue((await gdb_reverse_continue(session_id))["ok"])
+                self.assertTrue(
+                    (await gdb_reverse_continue_and_context(session_id))["ok"]
+                )
+                self.assertTrue((await gdb_reverse_step(session_id))["ok"])
+                self.assertTrue((await gdb_reverse_step(session_id, instruction=True))["ok"])
+                self.assertTrue((await gdb_reverse_step_and_context(session_id))["ok"])
+                self.assertTrue((await gdb_reverse_next(session_id))["ok"])
+                self.assertTrue((await gdb_reverse_next(session_id, instruction=True))["ok"])
+                self.assertTrue((await gdb_reverse_next_and_context(session_id))["ok"])
+                self.assertTrue((await gdb_reverse_finish(session_id))["ok"])
+                self.assertTrue((await gdb_reverse_finish_and_context(session_id))["ok"])
+                self.assertTrue((await gdb_stop_recording(session_id))["ok"])
                 self.assertTrue(
                     (await gdb_eval_expression(session_id, "value + 1"))["ok"]
                 )
@@ -292,7 +337,7 @@ class ServerContractTests(unittest.TestCase):
 
             commands = log_path.read_text(encoding="utf-8")
             self.assertIn("-target-attach 1234", commands)
-            self.assertIn('-target-select core /tmp/core.sample', commands)
+            self.assertIn('-target-select core "/tmp/core.sample"', commands)
             self.assertIn("signal 0", commands)
             self.assertIn('-data-evaluate-expression "value + 1"', commands)
             self.assertIn('print value + 1', commands)
@@ -326,6 +371,16 @@ class ServerContractTests(unittest.TestCase):
             self.assertIn("commands 1", commands)
             self.assertIn("-target-detach", commands)
             self.assertIn("kill", commands)
+            self.assertIn('-target-select core "/tmp/core with spaces"', commands)
+            self.assertIn("target record-full", commands)
+            self.assertIn("info record", commands)
+            self.assertIn("reverse-continue", commands)
+            self.assertIn("reverse-step", commands)
+            self.assertIn("reverse-stepi", commands)
+            self.assertIn("reverse-next", commands)
+            self.assertIn("reverse-nexti", commands)
+            self.assertIn("reverse-finish", commands)
+            self.assertIn("record stop", commands)
 
     def test_context_rejects_invalid_frame_count(self) -> None:
         result = asyncio.run(gdb_context("missing", max_frames=0))

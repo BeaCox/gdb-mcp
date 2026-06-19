@@ -96,7 +96,10 @@ Typical tool flow:
    `gdb_step_and_context`, or `gdb_next_and_context`.
 4. Inspect further with `gdb_context`, `gdb_eval_expression`,
    `gdb_registers`, or `gdb_read_memory`.
-5. `gdb_close_session` when finished.
+5. For time-travel debugging, use `gdb_start_recording` before the run and then
+   `gdb_reverse_continue_and_context`, `gdb_reverse_step_and_context`, or
+   `gdb_reverse_next_and_context`.
+6. `gdb_close_session` when finished.
 
 Every session has an explicit `session_id`; there is no implicit current session.
 The `*_and_context` tools return a compact summary, current frame, backtrace, and
