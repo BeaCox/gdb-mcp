@@ -8,19 +8,24 @@ This example exercises the supported local Linux path.
 cc -g -gdwarf-4 -O0 examples/hello.c -o /tmp/gdb-mcp-hello
 ```
 
-## Start the MCP Server
+## Configure the MCP Server
 
 From a checkout:
 
 ```bash
-uv run gdb-mcp
+codex mcp add gdb -- uv run gdb-mcp
 ```
 
 From Git:
 
 ```bash
-uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.2.0 gdb-mcp
+codex mcp add gdb -- \
+  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@main gdb-mcp
 ```
+
+`gdb-mcp` is the client-facing lazy stdio proxy. The MCP client discovers tools
+at startup, and the full backend starts only when the first `gdb_*` tool is
+called.
 
 ## Tool Flow
 
@@ -110,7 +115,7 @@ Close the session:
 
 The demo above does not require unsafe mode. Tools such as `gdb_call_function`,
 `gdb_set_variable`, `gdb_write_memory`, `gdb_breakpoint_commands`, and raw
-`gdb_execute` require launching the server with:
+`gdb_execute` require launching the client-facing proxy with:
 
 ```bash
 gdb-mcp --unsafe

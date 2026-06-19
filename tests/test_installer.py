@@ -51,6 +51,10 @@ class InstallerTests(unittest.TestCase):
             payload["claude_code"]["mcpServers"]["gdb"]["command"],  # type: ignore[index]
             "uvx",
         )
+        self.assertEqual(
+            payload["claude_code"]["mcpServers"]["gdb"]["args"][-1],  # type: ignore[index]
+            "gdb-mcp",
+        )
 
     def test_marketplace_manifests_point_to_plugin(self) -> None:
         root = Path(__file__).resolve().parents[1]
