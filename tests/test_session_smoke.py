@@ -9,6 +9,7 @@ from gdb_mcp.server import (
     gdb_attach,
     gdb_close_session,
     gdb_continue,
+    gdb_continue_and_context,
     gdb_create_session,
     gdb_current_location,
     gdb_detach,
@@ -21,6 +22,7 @@ from gdb_mcp.server import (
     gdb_memory_mappings,
     gdb_print,
     gdb_run,
+    gdb_run_and_context,
     gdb_set_breakpoint,
     gdb_set_watchpoint,
     gdb_source,
@@ -184,6 +186,34 @@ class GdbSessionSmokeTests(unittest.TestCase):
 
                 watchpoint = await gdb_set_watchpoint(session_id, "value")
                 self.assertTrue(watchpoint["ok"], watchpoint)
+            finally:
+                await gdb_close_session(session_id)
+
+            created = await gdb_create_session(program=str(binary), startup_timeout=10)
+            self.assertTrue(created["ok"], created)
+            session_id = created["session"]["session_id"]
+            try:
+                breakpoint = await gdb_set_breakpoint(session_id, "add")
+                self.assertTrue(breakpoint["ok"], breakpoint)
+
+                context = await gdb_run_and_context(session_id, timeout=10.0)
+                self.assertTrue(context["ok"], context)
+                self.assertEqual(context["stop_reason"], "breakpoint-hit")
+                self.assertEqual(context["location"]["func"], "add")
+                self.assertIn("add", context["summary"])
+                self.assertGreaterEqual(len(context["backtrace"]), 2)
+                locals_by_name = {
+                    item["name"]: item.get("value") for item in context["locals"]
+                }
+                self.assertEqual(locals_by_name["a"], "2")
+                self.assertEqual(locals_by_name["b"], "40")
+                self.assertNotIn("raw", context)
+
+                finished = await gdb_continue_and_context(session_id, timeout=10.0)
+                self.assertTrue(finished["ok"], finished)
+                self.assertEqual(finished["stop_reason"], "exited-normally")
+                self.assertIn("value=42", finished["output"])
+                self.assertIsNone(finished["location"])
             finally:
                 await gdb_close_session(session_id)
 

@@ -30,12 +30,16 @@ Safety levels:
 | Tool | Safety | Main Parameters | Purpose |
 | --- | --- | --- | --- |
 | `gdb_run` | Execution | `session_id`, `args`, `timeout`, `auto_interrupt` | Run or restart the inferior. |
+| `gdb_run_and_context` | Execution | `session_id`, `args`, `timeout`, `max_frames`, `include_raw` | Run or restart, then return compact location, backtrace, and locals. |
 | `gdb_restart` | Execution | `session_id`, `args`, `timeout`, `auto_interrupt` | Alias for a restart-style `gdb_run`. |
 | `gdb_continue` | Execution | `session_id`, `timeout`, `auto_interrupt` | Continue execution until stop or timeout. |
+| `gdb_continue_and_context` | Execution | `session_id`, `timeout`, `max_frames`, `include_raw` | Continue, then return compact stop or exit context. |
 | `gdb_interrupt` | Execution | `session_id`, `timeout` | Interrupt a running target. |
 | `gdb_signal` | Execution | `session_id`, `signal_name` | Resume with a signal such as `SIGTERM` or `0`. |
 | `gdb_step` | Execution | `session_id`, `instruction` | Step into a line or instruction. |
+| `gdb_step_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw` | Step into, then return compact context. |
 | `gdb_next` | Execution | `session_id`, `instruction` | Step over a line or instruction. |
+| `gdb_next_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw` | Step over, then return compact context. |
 | `gdb_detach` | Execution | `session_id` | Detach from the current target. |
 | `gdb_kill` | Execution | `session_id` | Kill the current inferior. |
 
@@ -70,6 +74,7 @@ Safety levels:
 | Tool | Safety | Main Parameters | Purpose |
 | --- | --- | --- | --- |
 | `gdb_current_location` | Read | `session_id` | Return selected frame and last stop information. |
+| `gdb_context` | Read | `session_id`, `max_frames`, `include_raw` | Return compact current location, backtrace, locals, and a summary. |
 | `gdb_eval_expression` | Read | `session_id`, `expression` | Evaluate a safe expression. Rejects calls and mutations. |
 | `gdb_print` | Read | `session_id`, `expression` | Print a safe expression using GDB formatting. |
 | `gdb_call_function` | Unsafe | `session_id`, `expression` | Call an inferior function or evaluate unsafe expression. |

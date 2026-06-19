@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Compact context tools for agent workflows: `gdb_context`,
+  `gdb_run_and_context`, `gdb_continue_and_context`, `gdb_step_and_context`,
+  and `gdb_next_and_context`.
+
 ## [0.3.0] - 2026-06-19
 
 ### Added

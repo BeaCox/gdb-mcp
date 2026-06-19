@@ -84,6 +84,275 @@ def _result(session: GdbSession, result: CommandResult) -> dict[str, Any]:
     return result.to_dict(session.output_limit_chars)
 
 
+def _compact_frame(frame: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(frame, dict):
+        return None
+    compact = {
+        key: frame[key]
+        for key in ("level", "addr", "func", "file", "fullname", "line", "arch")
+        if key in frame
+    }
+    if "args" in frame:
+        compact["args"] = frame["args"]
+    return compact
+
+
+def _frame_from_location(location: dict[str, Any]) -> dict[str, Any] | None:
+    frame = location.get("frame")
+    if isinstance(frame, dict):
+        results = frame.get("results")
+        if isinstance(results, dict):
+            compact = _compact_frame(results.get("frame"))
+            if compact is not None:
+                return compact
+    last_stop = location.get("last_stop")
+    if isinstance(last_stop, dict):
+        return _compact_frame(last_stop.get("frame"))
+    return None
+
+
+def _stack_from_backtrace(backtrace: dict[str, Any]) -> list[dict[str, Any]]:
+    results = backtrace.get("results")
+    if not isinstance(results, dict):
+        return []
+    stack = results.get("stack")
+    if not isinstance(stack, list):
+        return []
+    frames: list[dict[str, Any]] = []
+    for item in stack:
+        if not isinstance(item, dict):
+            continue
+        compact = _compact_frame(item.get("frame"))
+        if compact is not None:
+            frames.append(compact)
+    return frames
+
+
+def _variables_from_locals(locals_result: dict[str, Any]) -> list[dict[str, Any]]:
+    results = locals_result.get("results")
+    if not isinstance(results, dict):
+        return []
+    variables = results.get("variables")
+    if not isinstance(variables, list):
+        return []
+    return [item for item in variables if isinstance(item, dict)]
+
+
+def _last_stop_reason(payload: dict[str, Any]) -> str | None:
+    stopped = payload.get("stopped")
+    if isinstance(stopped, dict):
+        reason = stopped.get("reason")
+        if isinstance(reason, str):
+            return reason
+    last_stop = payload.get("last_stop")
+    if isinstance(last_stop, dict):
+        reason = last_stop.get("reason")
+        if isinstance(reason, str):
+            return reason
+    return None
+
+
+def _target_output(payload: dict[str, Any]) -> str:
+    output = payload.get("target") or payload.get("log") or payload.get("console") or ""
+    return output if isinstance(output, str) else ""
+
+
+def _summary_lines(
+    *,
+    action: str,
+    execution: dict[str, Any] | None,
+    location: dict[str, Any],
+    stack: list[dict[str, Any]],
+    variables: list[dict[str, Any]],
+) -> list[str]:
+    lines = [f"action: {action}"]
+    if execution is not None:
+        reason = _last_stop_reason(execution)
+        if reason:
+            lines.append(f"stop: {reason}")
+        output = _target_output(execution)
+        if output:
+            lines.append(f"output: {output}")
+
+    frame = _frame_from_location(location)
+    if frame is not None:
+        function = frame.get("func", "??")
+        file_name = frame.get("fullname") or frame.get("file")
+        line = frame.get("line")
+        if file_name and line:
+            lines.append(f"location: {function} at {file_name}:{line}")
+        elif file_name:
+            lines.append(f"location: {function} at {file_name}")
+        else:
+            lines.append(f"location: {function}")
+
+    if stack:
+        rendered_stack = []
+        for frame in stack:
+            level = frame.get("level", "?")
+            function = frame.get("func", "??")
+            line = frame.get("line")
+            suffix = f":{line}" if line else ""
+            rendered_stack.append(f"#{level} {function}{suffix}")
+        lines.append("backtrace: " + " <- ".join(rendered_stack))
+
+    if variables:
+        rendered_variables = []
+        for variable in variables:
+            name = variable.get("name")
+            if not isinstance(name, str):
+                continue
+            value = variable.get("value")
+            if isinstance(value, str):
+                rendered_variables.append(f"{name}={value}")
+            else:
+                rendered_variables.append(name)
+        if rendered_variables:
+            lines.append("locals: " + ", ".join(rendered_variables))
+    return lines
+
+
+def _compact_payload(
+    *,
+    action: str,
+    execution: dict[str, Any] | None,
+    location: dict[str, Any],
+    backtrace: dict[str, Any],
+    locals_result: dict[str, Any],
+    include_raw: bool,
+) -> dict[str, Any]:
+    stack = _stack_from_backtrace(backtrace)
+    variables = _variables_from_locals(locals_result)
+    frame = _frame_from_location(location)
+    payload: dict[str, Any] = {
+        "ok": all(
+            item.get("ok")
+            for item in (location, backtrace, locals_result)
+        )
+        and (execution is None or bool(execution.get("ok"))),
+        "action": action,
+        "summary": "\n".join(
+            _summary_lines(
+                action=action,
+                execution=execution,
+                location=location,
+                stack=stack,
+                variables=variables,
+            )
+        ),
+        "stop_reason": _last_stop_reason(execution or location),
+        "location": frame,
+        "backtrace": stack,
+        "locals": variables,
+    }
+    if execution is not None:
+        payload["output"] = _target_output(execution)
+        payload["execution"] = {
+            key: execution.get(key)
+            for key in (
+                "ok",
+                "command",
+                "result_class",
+                "stopped",
+                "timed_out",
+                "interrupted",
+                "error",
+                "truncated",
+            )
+        }
+    if include_raw:
+        payload["raw"] = {
+            "execution": execution,
+            "location": location,
+            "backtrace": backtrace,
+            "locals": locals_result,
+        }
+    return payload
+
+
+def _execution_has_frame(execution: dict[str, Any]) -> bool:
+    stopped = execution.get("stopped")
+    return isinstance(stopped, dict) and isinstance(stopped.get("frame"), dict)
+
+
+def _require_max_frames(max_frames: int) -> None:
+    if not 1 <= max_frames <= 1_000:
+        raise ValueError("max_frames must be between 1 and 1000")
+
+
+def _execution_only_payload(
+    *,
+    action: str,
+    execution: dict[str, Any],
+    include_raw: bool,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "ok": bool(execution.get("ok")),
+        "action": action,
+        "summary": "\n".join(
+            _summary_lines(
+                action=action,
+                execution=execution,
+                location={},
+                stack=[],
+                variables=[],
+            )
+        ),
+        "stop_reason": _last_stop_reason(execution),
+        "location": None,
+        "backtrace": [],
+        "locals": [],
+        "output": _target_output(execution),
+        "execution": {
+            key: execution.get(key)
+            for key in (
+                "ok",
+                "command",
+                "result_class",
+                "stopped",
+                "timed_out",
+                "interrupted",
+                "error",
+                "truncated",
+            )
+        },
+    }
+    if include_raw:
+        payload["raw"] = {"execution": execution}
+    return payload
+
+
+async def _collect_context(
+    session_id: str,
+    *,
+    action: str,
+    execution: dict[str, Any] | None = None,
+    max_frames: int = 10,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    _require_max_frames(max_frames)
+    if execution is not None and not _execution_has_frame(execution):
+        return _execution_only_payload(
+            action=action,
+            execution=execution,
+            include_raw=include_raw,
+        )
+
+    location, backtrace, locals_result = await asyncio.gather(
+        gdb_current_location(session_id),
+        gdb_backtrace(session_id, max_frames=max_frames),
+        gdb_locals(session_id),
+    )
+    return _compact_payload(
+        action=action,
+        execution=execution,
+        location=location,
+        backtrace=backtrace,
+        locals_result=locals_result,
+        include_raw=include_raw,
+    )
+
+
 def _require_single_line(name: str, value: str) -> None:
     if "\n" in value or "\r" in value:
         raise ValueError(f"{name} must not contain line breaks")
@@ -972,6 +1241,139 @@ async def gdb_current_location(session_id: str) -> dict[str, Any]:
             "last_stop": session.last_stop,
             "frame": frame,
         }
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_context(
+    session_id: str,
+    max_frames: int = 10,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Return a compact current location, backtrace, and locals summary."""
+
+    try:
+        return await _collect_context(
+            session_id,
+            action="context",
+            max_frames=max_frames,
+            include_raw=include_raw,
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=TARGET_EXECUTION)
+async def gdb_run_and_context(
+    session_id: str,
+    args: list[str] | None = None,
+    timeout: float = 30.0,
+    auto_interrupt: bool = True,
+    max_frames: int = 10,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Run or restart the inferior, then return a compact stop context."""
+
+    try:
+        _require_max_frames(max_frames)
+        execution = await gdb_run(
+            session_id,
+            args=args,
+            timeout=timeout,
+            auto_interrupt=auto_interrupt,
+        )
+        return await _collect_context(
+            session_id,
+            action="run",
+            execution=execution,
+            max_frames=max_frames,
+            include_raw=include_raw,
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=TARGET_EXECUTION)
+async def gdb_continue_and_context(
+    session_id: str,
+    timeout: float = 30.0,
+    auto_interrupt: bool = True,
+    max_frames: int = 10,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Continue execution, then return a compact stop or exit summary."""
+
+    try:
+        _require_max_frames(max_frames)
+        execution = await gdb_continue(
+            session_id,
+            timeout=timeout,
+            auto_interrupt=auto_interrupt,
+        )
+        return await _collect_context(
+            session_id,
+            action="continue",
+            execution=execution,
+            max_frames=max_frames,
+            include_raw=include_raw,
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=TARGET_EXECUTION)
+async def gdb_step_and_context(
+    session_id: str,
+    instruction: bool = False,
+    timeout: float = 15.0,
+    max_frames: int = 10,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Step into one source line or instruction, then return compact context."""
+
+    try:
+        _require_max_frames(max_frames)
+        execution = await gdb_step(
+            session_id,
+            instruction=instruction,
+            timeout=timeout,
+        )
+        return await _collect_context(
+            session_id,
+            action="step",
+            execution=execution,
+            max_frames=max_frames,
+            include_raw=include_raw,
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=TARGET_EXECUTION)
+async def gdb_next_and_context(
+    session_id: str,
+    instruction: bool = False,
+    timeout: float = 15.0,
+    max_frames: int = 10,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Step over one source line or instruction, then return compact context."""
+
+    try:
+        _require_max_frames(max_frames)
+        execution = await gdb_next(
+            session_id,
+            instruction=instruction,
+            timeout=timeout,
+        )
+        return await _collect_context(
+            session_id,
+            action="next",
+            execution=execution,
+            max_frames=max_frames,
+            include_raw=include_raw,
+        )
     except Exception as exc:
         return _error(exc)
 

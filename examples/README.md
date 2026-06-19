@@ -46,7 +46,7 @@ Set a breakpoint in the function that computes the result:
 }
 ```
 
-Run to the breakpoint with `gdb_run`:
+Run to the breakpoint with `gdb_run_and_context`:
 
 ```json
 {
@@ -55,27 +55,12 @@ Run to the breakpoint with `gdb_run`:
 }
 ```
 
-Inspect state with `gdb_current_location`:
-
-```json
-{
-  "session_id": "<session_id>"
-}
-```
-
-Expected location:
+The result includes a compact summary plus `location`, `backtrace`, and `locals`
+fields. Expected location:
 
 ```text
 function: add
 file: examples/hello.c
-```
-
-Inspect locals with `gdb_locals`:
-
-```json
-{
-  "session_id": "<session_id>"
-}
 ```
 
 Expected locals:
@@ -87,14 +72,12 @@ b = 40
 
 Useful inspection tools at this point:
 
-- `gdb_current_location`
-- `gdb_backtrace`
-- `gdb_locals`
+- `gdb_context`
 - `gdb_eval_expression` with `{"expression": "value"}`
 - `gdb_disassemble_current_frame`
 - `gdb_info_files`
 
-Continue to exit:
+Continue to exit with `gdb_continue_and_context`:
 
 ```json
 {

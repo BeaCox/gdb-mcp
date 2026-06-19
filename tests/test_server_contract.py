@@ -10,6 +10,8 @@ from gdb_mcp.server import (
     gdb_breakpoint_condition,
     gdb_call_function,
     gdb_close_idle_sessions,
+    gdb_context,
+    gdb_continue_and_context,
     gdb_current_location,
     gdb_detach,
     gdb_detach_gdbserver,
@@ -26,6 +28,7 @@ from gdb_mcp.server import (
     gdb_kill,
     gdb_load_core,
     gdb_memory_mappings,
+    gdb_next_and_context,
     gdb_print,
     gdb_read_c_string,
     gdb_recent_commands,
@@ -39,6 +42,7 @@ from gdb_mcp.server import (
     gdb_signal,
     gdb_source,
     gdb_stack_arguments,
+    gdb_step_and_context,
     gdb_thread_apply_all_backtrace,
     gdb_write_memory,
     manager,
@@ -76,6 +80,11 @@ class ServerContractTests(unittest.TestCase):
             "gdb_breakpoint_condition",
             "gdb_breakpoint_commands",
             "gdb_current_location",
+            "gdb_context",
+            "gdb_run_and_context",
+            "gdb_continue_and_context",
+            "gdb_step_and_context",
+            "gdb_next_and_context",
             "gdb_disassemble_current_frame",
             "gdb_find_source",
             "gdb_thread_apply_all_backtrace",
@@ -213,6 +222,16 @@ class ServerContractTests(unittest.TestCase):
                     ))["ok"]
                 )
                 self.assertTrue((await gdb_current_location(session_id))["ok"])
+                self.assertTrue((await gdb_context(session_id))["ok"])
+                self.assertTrue(
+                    (await gdb_continue_and_context(session_id, timeout=1.0))["ok"]
+                )
+                self.assertTrue(
+                    (await gdb_step_and_context(session_id, timeout=1.0))["ok"]
+                )
+                self.assertTrue(
+                    (await gdb_next_and_context(session_id, timeout=1.0))["ok"]
+                )
                 self.assertTrue(
                     (await gdb_disassemble_current_frame(session_id, raw_bytes=True))[
                         "ok"
@@ -284,6 +303,11 @@ class ServerContractTests(unittest.TestCase):
             self.assertIn('disassemble /m main', commands)
             self.assertIn('disassemble /r 0x1000,0x1010', commands)
             self.assertIn("-stack-info-frame", commands)
+            self.assertIn("-stack-list-frames 0 9", commands)
+            self.assertIn("-stack-list-variables --simple-values", commands)
+            self.assertIn("-exec-continue", commands)
+            self.assertIn("-exec-step", commands)
+            self.assertIn("-exec-next", commands)
             self.assertIn("disassemble /r $pc", commands)
             self.assertIn("info sources", commands)
             self.assertIn('list sample.c:7', commands)
@@ -302,6 +326,11 @@ class ServerContractTests(unittest.TestCase):
             self.assertIn("commands 1", commands)
             self.assertIn("-target-detach", commands)
             self.assertIn("kill", commands)
+
+    def test_context_rejects_invalid_frame_count(self) -> None:
+        result = asyncio.run(gdb_context("missing", max_frames=0))
+        self.assertFalse(result["ok"])
+        self.assertIn("max_frames", result["error"])
 
     def test_close_idle_sessions(self) -> None:
         asyncio.run(self._test_close_idle_sessions())

@@ -92,12 +92,15 @@ Typical tool flow:
 
 1. `gdb_create_session` with an executable path.
 2. `gdb_set_breakpoint`.
-3. `gdb_run`, `gdb_continue`, `gdb_step`, or `gdb_next`.
-4. Inspect with `gdb_current_location`, `gdb_backtrace`, `gdb_locals`,
-   `gdb_eval_expression`, `gdb_registers`, or `gdb_read_memory`.
+3. `gdb_run_and_context`, `gdb_continue_and_context`,
+   `gdb_step_and_context`, or `gdb_next_and_context`.
+4. Inspect further with `gdb_context`, `gdb_eval_expression`,
+   `gdb_registers`, or `gdb_read_memory`.
 5. `gdb_close_session` when finished.
 
 Every session has an explicit `session_id`; there is no implicit current session.
+The `*_and_context` tools return a compact summary, current frame, backtrace, and
+locals. Pass `include_raw=true` when the raw GDB/MI payload is needed.
 
 See [examples/README.md](examples/README.md) for a Linux walkthrough and
 [TOOLS.md](TOOLS.md) for the full tool reference.
