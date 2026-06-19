@@ -1,15 +1,51 @@
-# gdb-mcp
+<p align="center">
+  <img src="assets/logo.svg" alt="gdb-mcp logo" width="150">
+</p>
 
-[![CI](https://github.com/BeaCox/gdb-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/BeaCox/gdb-mcp/actions/workflows/ci.yml)
+<h1 align="center">gdb-mcp</h1>
 
-`gdb-mcp` is a multi-session [Model Context Protocol](https://modelcontextprotocol.io/)
-server for driving GDB through GDB/MI. It lets Codex, Claude Code, and other MCP
-clients create isolated GDB sessions, run local executables, connect to
-`gdbserver`, set breakpoints, and inspect frames, variables, registers, and
-memory.
+<p align="center">
+  Multi-session GDB control for Codex, Claude Code, and any MCP client.
+</p>
 
-The default `gdb-mcp` command is a lazy stdio proxy: MCP clients discover tools
-at startup, and the full backend starts only on the first `gdb_*` tool call.
+<p align="center">
+  <a href="https://github.com/BeaCox/gdb-mcp/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/BeaCox/gdb-mcp/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-3776AB">
+  <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-16A34A">
+  <img alt="MCP server" src="https://img.shields.io/badge/MCP-server-0F172A">
+</p>
+
+`gdb-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io/) server
+that drives GDB through GDB/MI. It gives AI coding clients a structured,
+session-aware debugger interface for local Linux programs, core files, and
+`gdbserver` targets.
+
+The default `gdb-mcp` command is a lazy stdio proxy. MCP clients can discover
+tools immediately, while the full backend starts only when the first `gdb_*`
+tool is called.
+
+## Highlights
+
+- **Isolated debugging sessions**: every target gets an explicit `session_id`,
+  so multiple programs can be debugged side by side.
+- **Compact context tools**: run, continue, step, reverse-step, and inspect with
+  tool responses that include the current frame, backtrace, locals, and summary.
+- **Local and remote workflows**: debug local executables, attach to Linux
+  processes, load core files, connect to `gdbserver`, or launch a managed
+  `gdbserver`.
+- **Safety by default**: reads and ordinary debugger control are available out
+  of the box; raw GDB execution, inferior calls, mutation, and memory writes
+  require explicit unsafe mode.
+
+## What You Can Do
+
+| Workflow | Tools |
+| --- | --- |
+| Start and manage sessions | `gdb_create_session`, `gdb_attach`, `gdb_load_core`, `gdb_close_session` |
+| Control execution | `gdb_run_and_context`, `gdb_continue_and_context`, `gdb_step_and_context`, `gdb_next_and_context` |
+| Reverse debug | `gdb_start_recording`, `gdb_reverse_continue_and_context`, `gdb_reverse_step_and_context` |
+| Inspect state | `gdb_context`, `gdb_backtrace`, `gdb_locals`, `gdb_eval_expression`, `gdb_registers`, `gdb_read_memory` |
+| Work with remote targets | `gdb_connect_gdbserver`, `gdb_launch_gdbserver`, `gdb_gdbserver_status` |
 
 ## Requirements
 
@@ -78,7 +114,7 @@ Print portable client configuration:
 gdb-mcp --print-config
 ```
 
-## Use
+## Quick Start
 
 Open a new Codex or Claude Code session after installation and ask for a GDB
 debugging task:
@@ -88,7 +124,7 @@ Use GDB MCP to debug /tmp/gdb-mcp-hello. Set a breakpoint at add, run, show the
 current location, backtrace, locals, then continue once.
 ```
 
-Typical tool flow:
+Typical MCP tool flow:
 
 1. `gdb_create_session` with an executable path.
 2. `gdb_set_breakpoint`.
@@ -108,6 +144,24 @@ locals. Pass `include_raw=true` when the raw GDB/MI payload is needed.
 See [examples/README.md](examples/README.md) for a Linux walkthrough and
 [TOOLS.md](TOOLS.md) for the full tool reference.
 
+## Architecture
+
+```text
+MCP client
+  |
+  | stdio
+  v
+gdb-mcp lazy proxy
+  |
+  | starts on first gdb_* tool call
+  v
+gdb-mcp backend
+  |
+  | GDB/MI
+  v
+GDB / gdbserver / target program
+```
+
 ## Backend
 
 `gdb-mcp` normally starts the backend lazily. To run a standalone HTTP backend:
@@ -122,8 +176,8 @@ untrusted network without authentication and host isolation.
 
 ## Unsafe Tools
 
-Raw GDB execution, inferior function calls, variable mutation, memory writes,
-and breakpoint command lists are disabled by default. Enable them explicitly:
+Raw GDB execution, inferior function calls, variable mutation, memory writes, and
+breakpoint command lists are disabled by default. Enable them explicitly:
 
 ```bash
 gdb-mcp --unsafe
@@ -145,3 +199,10 @@ uv build
 
 Support policy and release notes live in [CHANGELOG.md](CHANGELOG.md). Security
 guidance is in [SECURITY.md](SECURITY.md).
+
+## Links
+
+- [Tool reference](TOOLS.md)
+- [Linux walkthrough](examples/README.md)
+- [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)

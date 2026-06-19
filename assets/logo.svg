@@ -1,0 +1,21 @@
+<svg width="320" height="320" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">gdb-mcp logo</title>
+  <desc id="desc">A debugger breakpoint sending data packets to an AI agent.</desc>
+
+  <rect width="320" height="320" rx="76" fill="#F4F6FB"/>
+
+  <!-- breakpoint / debug -->
+  <circle cx="74" cy="160" r="36" fill="#EF5350" opacity="0.16"/>
+  <circle cx="74" cy="160" r="22" fill="#EF5350"/>
+  <circle cx="74" cy="160" r="7" fill="#FFFFFF"/>
+
+  <!-- connection -->
+  <line x1="110" y1="160" x2="196" y2="160" stroke="#CBD5E1" stroke-width="8" stroke-linecap="round"/>
+
+  <!-- agent -->
+  <line x1="252" y1="120" x2="252" y2="106" stroke="#5C6BC0" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="252" cy="100" r="6" fill="#5C6BC0"/>
+  <rect x="206" y="120" width="92" height="80" rx="22" fill="#5C6BC0"/>
+  <circle cx="236" cy="160" r="8" fill="#FFFFFF"/>
+  <circle cx="268" cy="160" r="8" fill="#FFFFFF"/>
+</svg>

@@ -3,6 +3,7 @@ include CHANGELOG.md
 include CODE_OF_CONDUCT.md
 include SECURITY.md
 include TOOLS.md
+recursive-include assets *.svg
 recursive-include examples *.c *.md
 recursive-include .claude-plugin *.json
 recursive-include .agents *.json
