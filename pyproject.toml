@@ -39,7 +39,8 @@ dev = [
 ]
 
 [project.scripts]
-gdb-mcp = "gdb_mcp.server:main"
+gdb-mcp = "gdb_mcp.cli:main"
+gdb-mcp-backend = "gdb_mcp.server:main"
 
 [project.urls]
 Repository = "https://github.com/BeaCox/gdb-mcp"

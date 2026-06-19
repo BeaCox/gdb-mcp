@@ -1434,48 +1434,7 @@ async def gdb_server_health() -> dict[str, Any]:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Multi-session GDB MCP server")
-    lifecycle = parser.add_mutually_exclusive_group()
-    lifecycle.add_argument(
-        "--install",
-        nargs="?",
-        const="auto",
-        metavar="CLIENTS",
-        help="Install for detected clients or a comma-separated list",
-    )
-    lifecycle.add_argument(
-        "--uninstall",
-        nargs="?",
-        const="auto",
-        metavar="CLIENTS",
-        help="Uninstall from detected clients or a comma-separated list",
-    )
-    parser.add_argument(
-        "--direct",
-        action="store_true",
-        help="Configure MCP directly instead of installing marketplace plugins",
-    )
-    parser.add_argument(
-        "--scope",
-        choices=["user", "project", "local"],
-        default="user",
-        help="Client configuration scope where supported",
-    )
-    parser.add_argument(
-        "--source",
-        default=None,
-        help="Override the Python package source used by direct installs",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print installation commands without running them",
-    )
-    parser.add_argument(
-        "--list-clients",
-        action="store_true",
-        help="List supported clients and whether they are installed",
-    )
+    parser = argparse.ArgumentParser(description="Full gdb-mcp backend server")
     parser.add_argument(
         "--transport",
         choices=["stdio", "streamable-http", "sse"],
@@ -1501,51 +1460,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=runtime_config.output_limit_chars,
         help="Approximate output limit per tool result",
     )
-    parser.add_argument(
-        "--config",
-        "--print-config",
-        dest="print_config",
-        action="store_true",
-        help="Print portable MCP client configuration and exit",
-    )
     return parser
 
 
 def main() -> None:
     args = _build_parser().parse_args()
-    from .installer import (
-        PACKAGE_SOURCE,
-        install,
-        list_clients,
-        parse_targets,
-        print_configuration,
-        uninstall,
-    )
-
-    package_source = args.source or PACKAGE_SOURCE
-    if args.list_clients:
-        list_clients()
-        return
-    if args.print_config:
-        print_configuration(package_source)
-        return
-    if args.install is not None:
-        install(
-            parse_targets(args.install),
-            scope=args.scope,
-            direct=args.direct,
-            dry_run=args.dry_run,
-            package_source=package_source,
-        )
-        return
-    if args.uninstall is not None:
-        uninstall(
-            parse_targets(args.uninstall),
-            scope=args.scope,
-            direct=args.direct,
-            dry_run=args.dry_run,
-        )
-        return
 
     runtime_config.allow_unsafe_execute = (
         runtime_config.allow_unsafe_execute or args.unsafe
