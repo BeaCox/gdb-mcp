@@ -370,5 +370,5 @@ uv build
 Tests include parser coverage, real-GDB smoke coverage when GDB is installed,
 deterministic asynchronous lifecycle tests, and MCP tool-contract checks.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
-[LICENSE](LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md),
+[SECURITY.md](SECURITY.md), and [LICENSE](LICENSE).

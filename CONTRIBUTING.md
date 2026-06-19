@@ -1,6 +1,7 @@
 # Contributing
 
 Contributions are welcome through focused issues and pull requests.
+By participating, you agree to follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## Setup
 

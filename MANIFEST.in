@@ -1,5 +1,6 @@
 include CONTRIBUTING.md
 include CHANGELOG.md
+include CODE_OF_CONDUCT.md
 include SECURITY.md
 include TOOLS.md
 recursive-include examples *.c *.md
