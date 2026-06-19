@@ -21,8 +21,8 @@ All notable changes to this project are documented here.
 
 - Project metadata now advertises POSIX/Linux support instead of broad local
   macOS/Windows support.
-- README installation instructions now target public Git-based usage until a PyPI
-  release is available.
+- README installation instructions now target the tagged public Git release until
+  a PyPI release is available.
 - Safety documentation now distinguishes read-oriented tools, target execution
   tools, and unsafe-gated mutation tools.
 

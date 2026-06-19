@@ -19,7 +19,7 @@ uv run gdb-mcp
 From Git:
 
 ```bash
-uvx --from git+https://github.com/BeaCox/gdb-mcp.git@main gdb-mcp
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.2.0 gdb-mcp
 ```
 
 ## Tool Flow

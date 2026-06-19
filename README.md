@@ -57,17 +57,16 @@ Prerequisites:
 
 ### From Git
 
-Until a PyPI package is published, install or run directly from the public Git
-repository:
+Install or run directly from the tagged public Git release:
 
 ```bash
-uvx --from git+https://github.com/BeaCox/gdb-mcp.git@main gdb-mcp --install
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.2.0 gdb-mcp --install
 ```
 
 For direct MCP registration instead of marketplace plugins:
 
 ```bash
-uvx --from git+https://github.com/BeaCox/gdb-mcp.git@main \
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.2.0 \
   gdb-mcp --install --direct
 ```
 
@@ -103,7 +102,8 @@ codex plugin add gdb-mcp@beacox
 
 ### Universal Installer
 
-After a PyPI package is published, the same installer can be run as:
+PyPI publishing is planned but not currently enabled. After a PyPI package is
+published, the same installer can be run as:
 
 ```bash
 uvx gdb-mcp --install
@@ -171,7 +171,7 @@ Equivalent Claude Code configuration:
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/BeaCox/gdb-mcp.git@main",
+        "git+https://github.com/BeaCox/gdb-mcp.git@v0.2.0",
         "gdb-mcp"
       ]
     }
