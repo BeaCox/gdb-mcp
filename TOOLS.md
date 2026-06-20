@@ -58,7 +58,7 @@ Safety levels:
 
 | Tool | Safety | Main Parameters | Purpose |
 | --- | --- | --- | --- |
-| `gdb_set_breakpoint` | Mutation | `session_id`, `location`, `condition`, `temporary` | Set a breakpoint using GDB location syntax. |
+| `gdb_set_breakpoint` | Mutation | `session_id`, `location`, `condition`, `temporary`, `hardware` | Set a software, temporary, hardware, or temporary hardware breakpoint using GDB location syntax. |
 | `gdb_set_watchpoint` | Mutation | `session_id`, `expression`, `access` | Set write, read, or access watchpoints with safe-expression filtering. |
 | `gdb_enable_breakpoint` | Mutation | `session_id`, `number` | Enable a breakpoint. |
 | `gdb_disable_breakpoint` | Mutation | `session_id`, `number` | Disable a breakpoint. |
@@ -92,9 +92,12 @@ Safety levels:
 | `gdb_set_variable` | Unsafe | `session_id`, `expression`, `value` | Set an inferior variable or lvalue. |
 | `gdb_disassemble` | Read | `session_id`, `location`, `start_address`, `end_address`, `mixed`, `raw_bytes` | Disassemble a location or range. |
 | `gdb_disassemble_current_frame` | Read | `session_id`, `mixed`, `raw_bytes` | Disassemble around `$pc`. |
-| `gdb_source` | Read | `session_id`, `location` | List source around current frame or location. |
+| `gdb_disassemble_around_pc` | Read | `session_id`, `bytes_before`, `bytes_after`, `mixed`, `raw_bytes` | Disassemble a byte window around `$pc`. |
+| `gdb_source` | Read | `session_id`, `location` | List source around current frame or location and return parsed file/line metadata when GDB provides it. |
 | `gdb_find_source` | Read | `session_id`, `query`, `limit` | Search known source file paths. |
 | `gdb_registers` | Read | `session_id`, `register_numbers`, `fmt` | Read registers. |
+| `gdb_register_names` | Read | `session_id`, `register_numbers` | List register names known to GDB. |
+| `gdb_read_register` | Read | `session_id`, `register` | Read one named register such as `rax`, `pc`, or `$rip`. |
 | `gdb_read_memory` | Read | `session_id`, `address`, `count` | Read raw memory bytes. |
 | `gdb_write_memory` | Unsafe | `session_id`, `address`, `data_hex` | Write raw memory bytes. |
 | `gdb_search_memory` | Read | `session_id`, `start_address`, `length`, `pattern` | Search memory with GDB `find`. |
@@ -118,6 +121,7 @@ Safety levels:
 | `gdb_recent_events` | Read | `session_id`, `limit` | Return recent MI async/result records. |
 | `gdb_recent_commands` | Read | `session_id`, `limit` | Return recent commands sent to GDB. |
 | `gdb_session_diagnostics` | Read | `session_id` | Return session state plus recent commands/events. |
+| `gdb_command_reference` | Read | none | Return common safe tool flows and GDB/MI command equivalents. |
 | `gdb_server_health` | Read | none | Report version, dependency availability, safety mode, and sessions. |
 
 ## Advanced

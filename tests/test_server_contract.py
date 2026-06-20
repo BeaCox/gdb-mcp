@@ -10,6 +10,7 @@ from gdb_mcp.server import (
     gdb_breakpoint_condition,
     gdb_call_function,
     gdb_close_idle_sessions,
+    gdb_command_reference,
     gdb_context,
     gdb_continue_and_context,
     gdb_current_location,
@@ -17,6 +18,7 @@ from gdb_mcp.server import (
     gdb_detach_gdbserver,
     gdb_disable_breakpoint,
     gdb_disassemble,
+    gdb_disassemble_around_pc,
     gdb_disassemble_current_frame,
     gdb_enable_breakpoint,
     gdb_eval_expression,
@@ -31,8 +33,10 @@ from gdb_mcp.server import (
     gdb_next_and_context,
     gdb_print,
     gdb_read_c_string,
+    gdb_read_register,
     gdb_recent_commands,
     gdb_record_status,
+    gdb_register_names,
     gdb_reverse_continue,
     gdb_reverse_continue_and_context,
     gdb_reverse_finish,
@@ -124,6 +128,10 @@ class ServerContractTests(unittest.TestCase):
             "gdb_recent_commands",
             "gdb_session_diagnostics",
             "gdb_close_idle_sessions",
+            "gdb_read_register",
+            "gdb_register_names",
+            "gdb_disassemble_around_pc",
+            "gdb_command_reference",
         ):
             self.assertIn(name, names)
         for tool in tools:
@@ -254,6 +262,11 @@ class ServerContractTests(unittest.TestCase):
                     ]
                 )
                 self.assertTrue(
+                    (await gdb_set_breakpoint(session_id, "*0x401000", hardware=True))[
+                        "ok"
+                    ]
+                )
+                self.assertTrue(
                     (await gdb_disassemble(session_id, location="main", mixed=True))[
                         "ok"
                     ]
@@ -266,6 +279,7 @@ class ServerContractTests(unittest.TestCase):
                         raw_bytes=True,
                     ))["ok"]
                 )
+                self.assertTrue((await gdb_disassemble_around_pc(session_id))["ok"])
                 self.assertTrue((await gdb_current_location(session_id))["ok"])
                 self.assertTrue((await gdb_context(session_id))["ok"])
                 self.assertTrue(
@@ -289,6 +303,8 @@ class ServerContractTests(unittest.TestCase):
                 )
                 self.assertTrue((await gdb_stack_arguments(session_id, 3))["ok"])
                 self.assertTrue((await gdb_frame_variables(session_id, "all"))["ok"])
+                self.assertTrue((await gdb_register_names(session_id))["ok"])
+                self.assertTrue((await gdb_read_register(session_id, "pc"))["ok"])
                 self.assertTrue(
                     (await gdb_search_memory(session_id, "0x1000", 16, "0x41"))["ok"]
                 )
@@ -306,6 +322,7 @@ class ServerContractTests(unittest.TestCase):
                 self.assertTrue((await gdb_gdbserver_status(session_id))["ok"])
                 self.assertTrue((await gdb_recent_commands(session_id))["ok"])
                 self.assertTrue((await gdb_session_diagnostics(session_id))["ok"])
+                self.assertTrue((await gdb_command_reference())["ok"])
                 previous = runtime_config.allow_unsafe_execute
                 runtime_config.allow_unsafe_execute = True
                 try:
@@ -345,8 +362,10 @@ class ServerContractTests(unittest.TestCase):
             self.assertIn("-break-enable 1", commands)
             self.assertIn("-break-disable 1", commands)
             self.assertIn("condition 1 value == 42", commands)
+            self.assertIn("hbreak *0x401000", commands)
             self.assertIn('disassemble /m main', commands)
             self.assertIn('disassemble /r 0x1000,0x1010', commands)
+            self.assertIn("disassemble $pc-32,$pc+96", commands)
             self.assertIn("-stack-info-frame", commands)
             self.assertIn("-stack-list-frames 0 9", commands)
             self.assertIn("-stack-list-variables --simple-values", commands)
@@ -359,6 +378,8 @@ class ServerContractTests(unittest.TestCase):
             self.assertIn("thread apply all backtrace 3", commands)
             self.assertIn("-stack-list-arguments --simple-values 0 2", commands)
             self.assertIn("-stack-list-variables --simple-values", commands)
+            self.assertIn("-data-list-register-names", commands)
+            self.assertIn('-data-evaluate-expression "$pc"', commands)
             self.assertIn("find 0x1000, +16, 0x41", commands)
             self.assertIn('-data-read-memory-bytes "0x1000" 16', commands)
             self.assertIn("-file-list-shared-libraries", commands)

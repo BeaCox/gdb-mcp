@@ -396,6 +396,10 @@ def _require_hex_bytes(name: str, value: str) -> str:
 
 _EXPRESSION_ASSIGNMENT_RE = re.compile(r"(?<![<>=!])=(?!=)")
 _EXPRESSION_CALL_RE = re.compile(r"(?:[A-Za-z_$][\w$:]*|\]|\))\s*\(")
+_REGISTER_NAME_RE = re.compile(r"^\$?[A-Za-z_][A-Za-z0-9_]*$")
+_SOURCE_LINE_RE = re.compile(r"^\s*(?:=>\s*)?(?P<line>[0-9]+)\s+(?P<text>.*)$")
+_INFO_LINE_RE = re.compile(r'Line (?P<line>[0-9]+) of "(?P<file>[^"]+)"')
+_INFO_SOURCE_RE = re.compile(r"Current source file is (?P<file>.+?)(?:\n|$)")
 
 
 def _require_read_expression(name: str, expression: str) -> None:
@@ -408,6 +412,56 @@ def _require_read_expression(name: str, expression: str) -> None:
         raise ValueError(f"{name} must not modify the inferior")
     if _EXPRESSION_CALL_RE.search(expression):
         raise ValueError(f"{name} must not call functions in safe mode")
+
+
+def _require_register_name(register: str) -> str:
+    _require_single_line("register", register)
+    normalized = register.strip()
+    if not _REGISTER_NAME_RE.fullmatch(normalized):
+        raise ValueError("register must be a single register name such as rax or $pc")
+    return normalized if normalized.startswith("$") else f"${normalized}"
+
+
+def _source_context(
+    list_console: str,
+    info_line_console: str = "",
+    info_source_console: str = "",
+) -> dict[str, Any]:
+    lines: list[dict[str, Any]] = []
+    for raw_line in list_console.splitlines():
+        match = _SOURCE_LINE_RE.match(raw_line)
+        if match is None:
+            continue
+        lines.append(
+            {
+                "line": int(match.group("line")),
+                "text": match.group("text"),
+                "raw": raw_line,
+            }
+        )
+
+    info_line = _INFO_LINE_RE.search(info_line_console)
+    info_source = _INFO_SOURCE_RE.search(info_source_console)
+    file_path = ""
+    current_line = 0
+    if info_line is not None:
+        file_path = info_line.group("file")
+        current_line = int(info_line.group("line"))
+    elif info_source is not None:
+        file_path = info_source.group("file").strip().strip('"')
+
+    line_start = lines[0]["line"] if lines else 0
+    line_end = lines[-1]["line"] if lines else 0
+    context: dict[str, Any] = {
+        "file_path": file_path,
+        "line_start": line_start,
+        "line_end": line_end,
+        "current_line": current_line,
+        "lines": lines,
+    }
+    if file_path and line_start:
+        context["vscode_uri"] = f"vscode://file{file_path}:{line_start}"
+    return context
 
 
 async def _terminate_process(process: asyncio.subprocess.Process | None) -> None:
@@ -996,6 +1050,7 @@ async def gdb_set_breakpoint(
     location: str,
     condition: str | None = None,
     temporary: bool = False,
+    hardware: bool = False,
 ) -> dict[str, Any]:
     """Set a breakpoint using GDB CLI syntax."""
 
@@ -1003,7 +1058,14 @@ async def gdb_set_breakpoint(
         _require_single_line("location", location)
         if condition is not None:
             _require_single_line("condition", condition)
-        prefix = "tbreak" if temporary else "break"
+        if hardware and temporary:
+            prefix = "thbreak"
+        elif hardware:
+            prefix = "hbreak"
+        elif temporary:
+            prefix = "tbreak"
+        else:
+            prefix = "break"
         command = f"{prefix} {location}"
         if condition:
             command += f" if {condition}"
@@ -1622,6 +1684,33 @@ async def gdb_disassemble_current_frame(
 
 
 @mcp.tool(annotations=READ_ONLY)
+async def gdb_disassemble_around_pc(
+    session_id: str,
+    bytes_before: int = 32,
+    bytes_after: int = 96,
+    mixed: bool = False,
+    raw_bytes: bool = False,
+) -> dict[str, Any]:
+    """Disassemble a byte window around the current program counter."""
+
+    try:
+        if not 0 <= bytes_before <= 4096:
+            raise ValueError("bytes_before must be between 0 and 4096")
+        if not 1 <= bytes_after <= 4096:
+            raise ValueError("bytes_after must be between 1 and 4096")
+        options = ""
+        if mixed or raw_bytes:
+            options = "/" + ("m" if mixed else "") + ("r" if raw_bytes else "")
+        command = (
+            f"disassemble {options} $pc-{bytes_before},$pc+{bytes_after}"
+        ).replace("  ", " ")
+        session = await manager.get(session_id)
+        return _result(session, await session.execute(command, timeout=10.0))
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
 async def gdb_find_source(
     session_id: str,
     query: str,
@@ -1664,7 +1753,21 @@ async def gdb_source(
             _require_cli_target("location", location)
             command = f"list {location}"
         session = await manager.get(session_id)
-        return _result(session, await session.execute(command, timeout=10.0))
+        payload = _result(session, await session.execute(command, timeout=10.0))
+        info_line = _result(session, await session.execute("info line", timeout=5.0))
+        info_source = _result(session, await session.execute("info source", timeout=5.0))
+        return {
+            **payload,
+            "source": _source_context(
+                str(payload.get("console") or ""),
+                str(info_line.get("console") or ""),
+                str(info_source.get("console") or ""),
+            ),
+            "source_metadata": {
+                "info_line_ok": info_line.get("ok"),
+                "info_source_ok": info_source.get("ok"),
+            },
+        }
     except Exception as exc:
         return _error(exc)
 
@@ -1754,6 +1857,57 @@ async def gdb_registers(
                 timeout=10.0,
             ),
         )
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_register_names(
+    session_id: str,
+    register_numbers: list[int] | None = None,
+) -> dict[str, Any]:
+    """List register names, optionally limited to GDB register numbers."""
+
+    try:
+        if register_numbers and any(item < 0 for item in register_numbers):
+            raise ValueError("Register numbers must be non-negative")
+        suffix = ""
+        if register_numbers:
+            suffix = " " + " ".join(str(item) for item in register_numbers)
+        session = await manager.get(session_id)
+        return _result(
+            session,
+            await session.execute(f"-data-list-register-names{suffix}", timeout=10.0),
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_read_register(
+    session_id: str,
+    register: str,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Read one register by architecture name, such as rax, pc, sp, or $rip."""
+
+    try:
+        expression = _require_register_name(register)
+        session = await manager.get(session_id)
+        payload = _result(
+            session,
+            await session.execute(
+                f"-data-evaluate-expression {c_escape(expression)}",
+                timeout=timeout,
+            ),
+        )
+        value = payload.get("results", {}).get("value")
+        return {
+            **payload,
+            "register": expression.removeprefix("$"),
+            "expression": expression,
+            "value": value,
+        }
     except Exception as exc:
         return _error(exc)
 
@@ -2037,6 +2191,64 @@ async def gdb_close_idle_sessions(max_idle_seconds: float = 3600.0) -> dict[str,
         return {"ok": True, "closed": closed, "closed_count": len(closed)}
     except Exception as exc:
         return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_command_reference() -> dict[str, Any]:
+    """Return common safe tool flows and GDB/MI command equivalents."""
+
+    return {
+        "ok": True,
+        "recommended_flow": [
+            "gdb_create_session",
+            "gdb_set_breakpoint",
+            "gdb_run_and_context",
+            "gdb_context",
+            "gdb_read_register",
+            "gdb_disassemble_around_pc",
+            "gdb_continue_and_context",
+            "gdb_close_session",
+        ],
+        "safe_tools": {
+            "breakpoints": ["gdb_set_breakpoint", "gdb_list_breakpoints"],
+            "execution": [
+                "gdb_run_and_context",
+                "gdb_continue_and_context",
+                "gdb_step_and_context",
+                "gdb_next_and_context",
+            ],
+            "state": [
+                "gdb_context",
+                "gdb_backtrace",
+                "gdb_locals",
+                "gdb_read_register",
+                "gdb_register_names",
+                "gdb_read_memory",
+            ],
+            "source": [
+                "gdb_source",
+                "gdb_find_source",
+                "gdb_disassemble",
+                "gdb_disassemble_around_pc",
+            ],
+        },
+        "common_mi_commands": [
+            {"mi": "-break-insert LOCATION", "tool": "gdb_set_breakpoint"},
+            {"mi": "-break-delete NUM", "tool": "gdb_delete_breakpoint"},
+            {"mi": "-exec-run", "tool": "gdb_run"},
+            {"mi": "-exec-continue", "tool": "gdb_continue"},
+            {"mi": "-exec-step", "tool": "gdb_step"},
+            {"mi": "-exec-next", "tool": "gdb_next"},
+            {"mi": "-stack-list-frames 0 N", "tool": "gdb_backtrace"},
+            {"mi": "-data-evaluate-expression EXPR", "tool": "gdb_eval_expression"},
+            {"mi": "-data-list-register-values FMT", "tool": "gdb_registers"},
+            {"mi": "-data-read-memory-bytes ADDRESS COUNT", "tool": "gdb_read_memory"},
+        ],
+        "unsafe_note": (
+            "Use gdb_execute only with --unsafe or GDB_MCP_ALLOW_UNSAFE=1. "
+            "Prefer dedicated tools when available."
+        ),
+    }
 
 
 @mcp.tool(annotations=READ_ONLY)

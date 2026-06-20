@@ -44,7 +44,7 @@ tool is called.
 | Start and manage sessions | `gdb_create_session`, `gdb_attach`, `gdb_load_core`, `gdb_close_session` |
 | Control execution | `gdb_run_and_context`, `gdb_continue_and_context`, `gdb_step_and_context`, `gdb_next_and_context` |
 | Reverse debug | `gdb_start_recording`, `gdb_reverse_continue_and_context`, `gdb_reverse_step_and_context` |
-| Inspect state | `gdb_context`, `gdb_backtrace`, `gdb_locals`, `gdb_eval_expression`, `gdb_registers`, `gdb_read_memory` |
+| Inspect state | `gdb_context`, `gdb_backtrace`, `gdb_locals`, `gdb_eval_expression`, `gdb_read_register`, `gdb_registers`, `gdb_source`, `gdb_disassemble_around_pc`, `gdb_read_memory` |
 | Work with remote targets | `gdb_connect_gdbserver`, `gdb_launch_gdbserver`, `gdb_gdbserver_status` |
 
 ## Requirements
