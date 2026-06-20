@@ -9,6 +9,14 @@ All notable changes to this project are documented here.
 - Compact context tools for agent workflows: `gdb_context`,
   `gdb_run_and_context`, `gdb_continue_and_context`, `gdb_step_and_context`,
   and `gdb_next_and_context`.
+- Pwndbg-inspired, dependency-free binary analysis tools for high-optimization
+  or stripped binaries where source symbols are unavailable:
+  `gdb_pwn_context`, `gdb_vmmap_structured`, `gdb_address_info`,
+  `gdb_telescope`, `gdb_nearpc`, `gdb_piebase`, `gdb_break_rva`,
+  `gdb_checksec`, and `gdb_elf_info`.
+- Structured address, mapping, PIE/RVA, near-PC disassembly, pointer-chain, and
+  ELF hardening metadata so agents can reason in module offsets, registers, and
+  memory instead of relying on source-level debug information.
 
 ## [0.3.0] - 2026-06-19
 

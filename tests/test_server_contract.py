@@ -5,10 +5,13 @@ import unittest
 from pathlib import Path
 
 from gdb_mcp.server import (
+    gdb_address_info,
     gdb_attach,
+    gdb_break_rva,
     gdb_breakpoint_commands,
     gdb_breakpoint_condition,
     gdb_call_function,
+    gdb_checksec,
     gdb_close_idle_sessions,
     gdb_command_reference,
     gdb_context,
@@ -20,6 +23,7 @@ from gdb_mcp.server import (
     gdb_disassemble,
     gdb_disassemble_around_pc,
     gdb_disassemble_current_frame,
+    gdb_elf_info,
     gdb_enable_breakpoint,
     gdb_eval_expression,
     gdb_execute,
@@ -30,8 +34,11 @@ from gdb_mcp.server import (
     gdb_kill,
     gdb_load_core,
     gdb_memory_mappings,
+    gdb_nearpc,
     gdb_next_and_context,
+    gdb_piebase,
     gdb_print,
+    gdb_pwn_context,
     gdb_read_c_string,
     gdb_read_register,
     gdb_recent_commands,
@@ -58,7 +65,9 @@ from gdb_mcp.server import (
     gdb_start_recording,
     gdb_step_and_context,
     gdb_stop_recording,
+    gdb_telescope,
     gdb_thread_apply_all_backtrace,
+    gdb_vmmap_structured,
     gdb_write_memory,
     manager,
     mcp,
@@ -132,6 +141,15 @@ class ServerContractTests(unittest.TestCase):
             "gdb_register_names",
             "gdb_disassemble_around_pc",
             "gdb_command_reference",
+            "gdb_vmmap_structured",
+            "gdb_address_info",
+            "gdb_telescope",
+            "gdb_nearpc",
+            "gdb_piebase",
+            "gdb_break_rva",
+            "gdb_pwn_context",
+            "gdb_checksec",
+            "gdb_elf_info",
         ):
             self.assertIn(name, names)
         for tool in tools:
@@ -314,6 +332,17 @@ class ServerContractTests(unittest.TestCase):
                 self.assertTrue((await gdb_shared_libraries(session_id))["ok"])
                 self.assertTrue((await gdb_info_files(session_id))["ok"])
                 self.assertTrue((await gdb_memory_mappings(session_id))["ok"])
+                self.assertTrue((await gdb_vmmap_structured(session_id))["ok"])
+                self.assertTrue(
+                    (await gdb_address_info(session_id, "0x401004", read_string=False))[
+                        "ok"
+                    ]
+                )
+                self.assertTrue((await gdb_telescope(session_id, "0x7fffffffe000"))["ok"])
+                self.assertTrue((await gdb_nearpc(session_id))["ok"])
+                self.assertTrue((await gdb_piebase(session_id, offset=0x100))["ok"])
+                self.assertTrue((await gdb_break_rva(session_id, offset=0x100))["ok"])
+                self.assertTrue((await gdb_pwn_context(session_id))["ok"])
                 self.assertTrue(
                     (await gdb_set_remote_paths(session_id, sysroot="/tmp/sysroot"))[
                         "ok"
@@ -385,6 +414,10 @@ class ServerContractTests(unittest.TestCase):
             self.assertIn("-file-list-shared-libraries", commands)
             self.assertIn("info files", commands)
             self.assertIn("info proc mappings", commands)
+            self.assertIn('info symbol 0x401004', commands)
+            self.assertIn('-data-read-memory-bytes "0x7fffffffe000" 64', commands)
+            self.assertIn("x/12i 0x400fe4", commands)
+            self.assertIn("break *0x400100", commands)
             self.assertIn('-gdb-set sysroot "/tmp/sysroot"', commands)
             self.assertIn("print puts(1)", commands)
             self.assertIn("set var value = 1", commands)
@@ -402,6 +435,14 @@ class ServerContractTests(unittest.TestCase):
             self.assertIn("reverse-nexti", commands)
             self.assertIn("reverse-finish", commands)
             self.assertIn("record stop", commands)
+
+    def test_elf_tools_reject_missing_target(self) -> None:
+        checksec = asyncio.run(gdb_checksec())
+        elf_info = asyncio.run(gdb_elf_info())
+        self.assertFalse(checksec["ok"])
+        self.assertFalse(elf_info["ok"])
+        self.assertIn("Provide session_id or file_path", checksec["error"])
+        self.assertIn("Provide session_id or file_path", elf_info["error"])
 
     def test_context_rejects_invalid_frame_count(self) -> None:
         result = asyncio.run(gdb_context("missing", max_frames=0))

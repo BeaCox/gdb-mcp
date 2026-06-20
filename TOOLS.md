@@ -93,6 +93,7 @@ Safety levels:
 | `gdb_disassemble` | Read | `session_id`, `location`, `start_address`, `end_address`, `mixed`, `raw_bytes` | Disassemble a location or range. |
 | `gdb_disassemble_current_frame` | Read | `session_id`, `mixed`, `raw_bytes` | Disassemble around `$pc`. |
 | `gdb_disassemble_around_pc` | Read | `session_id`, `bytes_before`, `bytes_after`, `mixed`, `raw_bytes` | Disassemble a byte window around `$pc`. |
+| `gdb_nearpc` | Read | `session_id`, `pc`, `lines`, `reverse` | Return parsed instruction rows near an address, with current-PC and mapping annotations. |
 | `gdb_source` | Read | `session_id`, `location` | List source around current frame or location and return parsed file/line metadata when GDB provides it. |
 | `gdb_find_source` | Read | `session_id`, `query`, `limit` | Search known source file paths. |
 | `gdb_registers` | Read | `session_id`, `register_numbers`, `fmt` | Read registers. |
@@ -102,9 +103,26 @@ Safety levels:
 | `gdb_write_memory` | Unsafe | `session_id`, `address`, `data_hex` | Write raw memory bytes. |
 | `gdb_search_memory` | Read | `session_id`, `start_address`, `length`, `pattern` | Search memory with GDB `find`. |
 | `gdb_read_c_string` | Read | `session_id`, `address`, `max_bytes` | Read a NUL-terminated string. |
+| `gdb_telescope` | Read | `session_id`, `address`, `count`, `pointer_size`, `max_depth` | Read pointer-sized slots and annotate pointer chains with mapping metadata. |
 | `gdb_shared_libraries` | Read | `session_id` | List shared libraries known to GDB. |
 | `gdb_info_files` | Read | `session_id` | Return `info files`. |
 | `gdb_memory_mappings` | Read | `session_id` | Return Linux process mappings when available. |
+| `gdb_vmmap_structured` | Read | `session_id`, `address`, `module`, `executable`, `writable` | Return parsed mappings with address/module/permission filters and optional gaps. |
+| `gdb_address_info` | Read | `session_id`, `expression`, `read_string` | Resolve an address to its mapping, module offsets, nearest symbol, and optional C string. |
+| `gdb_piebase` | Read | `session_id`, `offset`, `module` | Calculate a runtime VA from a PIE/module base plus offset. |
+| `gdb_checksec` | Read | `session_id`, `file_path` | Return ELF hardening settings such as PIE, NX, RELRO, canary, Build-ID, IBT, and SHSTK. |
+| `gdb_elf_info` | Read | `session_id`, `file_path`, `include_raw` | Return ELF header, section, security, and Build-ID metadata. |
+
+## Binary Analysis Context
+
+These tools are designed for optimized or stripped binaries where source-level
+debugging is unavailable and the useful workflow is address, register, memory,
+and module-offset oriented.
+
+| Tool | Safety | Main Parameters | Purpose |
+| --- | --- | --- | --- |
+| `gdb_pwn_context` | Read | `session_id`, `max_frames`, `telescope_count`, `nearpc_lines` | Return a pwndbg-style context with location, backtrace, registers, `$pc/$sp`, near-PC disassembly, stack telescope, and vmmap. |
+| `gdb_break_rva` | Mutation | `session_id`, `offset`, `module`, `temporary`, `hardware` | Set a breakpoint at module PIE base plus an RVA-style offset. |
 
 ## Remote Targets
 

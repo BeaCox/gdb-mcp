@@ -6,7 +6,9 @@ import unittest
 from pathlib import Path
 
 from gdb_mcp.server import (
+    gdb_address_info,
     gdb_attach,
+    gdb_checksec,
     gdb_close_session,
     gdb_continue,
     gdb_continue_and_context,
@@ -14,20 +16,25 @@ from gdb_mcp.server import (
     gdb_current_location,
     gdb_detach,
     gdb_disassemble,
+    gdb_elf_info,
     gdb_eval_expression,
     gdb_frame_variables,
     gdb_info_files,
     gdb_launch_gdbserver,
     gdb_load_core,
     gdb_memory_mappings,
+    gdb_nearpc,
     gdb_print,
+    gdb_pwn_context,
     gdb_run,
     gdb_run_and_context,
     gdb_set_breakpoint,
     gdb_set_watchpoint,
     gdb_source,
     gdb_stack_arguments,
+    gdb_telescope,
     gdb_thread_apply_all_backtrace,
+    gdb_vmmap_structured,
 )
 from gdb_mcp.session import SessionManager
 
@@ -183,6 +190,33 @@ class GdbSessionSmokeTests(unittest.TestCase):
 
                 mappings = await gdb_memory_mappings(session_id)
                 self.assertTrue(mappings["ok"], mappings)
+
+                structured_mappings = await gdb_vmmap_structured(session_id)
+                self.assertTrue(structured_mappings["ok"], structured_mappings)
+                self.assertGreater(structured_mappings["mapping_count"], 0)
+
+                pc_info = await gdb_address_info(session_id, "$pc", read_string=False)
+                self.assertTrue(pc_info["ok"], pc_info)
+                self.assertIsNotNone(pc_info["mapping_info"])
+
+                nearpc = await gdb_nearpc(session_id, lines=4, reverse=1)
+                self.assertTrue(nearpc["ok"], nearpc)
+                self.assertGreaterEqual(len(nearpc["instructions"]), 1)
+
+                telescope = await gdb_telescope(session_id, count=2, max_depth=0)
+                self.assertTrue(telescope["ok"], telescope)
+
+                pwn_context = await gdb_pwn_context(session_id, telescope_count=2, nearpc_lines=4)
+                self.assertTrue(pwn_context["ok"], pwn_context)
+
+                if shutil.which("readelf") is not None:
+                    checksec = await gdb_checksec(session_id=session_id)
+                    self.assertTrue(checksec["ok"], checksec)
+                    self.assertIn("pie", checksec["security"])
+
+                    elf_info = await gdb_elf_info(session_id=session_id)
+                    self.assertTrue(elf_info["ok"], elf_info)
+                    self.assertGreater(elf_info["section_count"], 0)
 
                 watchpoint = await gdb_set_watchpoint(session_id, "value")
                 self.assertTrue(watchpoint["ok"], watchpoint)

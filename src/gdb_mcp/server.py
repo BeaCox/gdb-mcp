@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import re
 import shutil
 import time
@@ -400,6 +401,22 @@ _REGISTER_NAME_RE = re.compile(r"^\$?[A-Za-z_][A-Za-z0-9_]*$")
 _SOURCE_LINE_RE = re.compile(r"^\s*(?:=>\s*)?(?P<line>[0-9]+)\s+(?P<text>.*)$")
 _INFO_LINE_RE = re.compile(r'Line (?P<line>[0-9]+) of "(?P<file>[^"]+)"')
 _INFO_SOURCE_RE = re.compile(r"Current source file is (?P<file>.+?)(?:\n|$)")
+_HEX_RE = re.compile(r"0x[0-9a-fA-F]+")
+_MAPPING_LINE_RE = re.compile(
+    r"^\s*(?P<start>0x[0-9a-fA-F]+)\s+"
+    r"(?P<end>0x[0-9a-fA-F]+)\s+"
+    r"(?P<size>0x[0-9a-fA-F]+)\s+"
+    r"(?P<offset>0x[0-9a-fA-F]+)"
+    r"(?:\s+(?P<perms>[rwxps-]{3,5}))?"
+    r"(?:\s+(?P<objfile>.*))?$"
+)
+_DISASSEMBLY_LINE_RE = re.compile(
+    r"^\s*(?P<current>=>)?\s*"
+    r"(?P<addr>0x[0-9a-fA-F]+)"
+    r"(?:\s+<(?P<symbol>[^>]+)>)?:\s*"
+    r"(?P<asm>.*)$"
+)
+_BUILD_ID_RE = re.compile(r"Build ID:\s*(?P<build_id>[0-9A-Fa-f]+)")
 
 
 def _require_read_expression(name: str, expression: str) -> None:
@@ -420,6 +437,154 @@ def _require_register_name(register: str) -> str:
     if not _REGISTER_NAME_RE.fullmatch(normalized):
         raise ValueError("register must be a single register name such as rax or $pc")
     return normalized if normalized.startswith("$") else f"${normalized}"
+
+
+def _parse_int(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, str):
+        return None
+    match = _HEX_RE.search(value)
+    if match is not None:
+        return int(match.group(0), 16)
+    stripped = value.strip()
+    if stripped.isdigit():
+        return int(stripped, 10)
+    return None
+
+
+def _hex_or_none(value: int | None) -> str | None:
+    return hex(value) if value is not None else None
+
+
+def _mapping_name(mapping: dict[str, Any]) -> str:
+    objfile = str(mapping.get("objfile") or "")
+    if objfile:
+        return os.path.basename(objfile) or objfile
+    return str(mapping.get("name") or "")
+
+
+def _classify_mapping(mapping: dict[str, Any]) -> str:
+    objfile = str(mapping.get("objfile") or "")
+    name = _mapping_name(mapping)
+    lowered = f"{objfile} {name}".lower()
+    if "[stack" in lowered:
+        return "stack"
+    if "[heap" in lowered:
+        return "heap"
+    if "[vdso" in lowered:
+        return "vdso"
+    if "[vvar" in lowered:
+        return "vvar"
+    if "[anon" in lowered or not objfile:
+        return "anonymous"
+    if "libc" in lowered:
+        return "libc"
+    if "ld-linux" in lowered or "/ld-" in lowered:
+        return "loader"
+    return "file"
+
+
+def _parse_mappings(console: str) -> list[dict[str, Any]]:
+    mappings: list[dict[str, Any]] = []
+    for line in console.splitlines():
+        match = _MAPPING_LINE_RE.match(line)
+        if match is None:
+            continue
+        start = int(match.group("start"), 16)
+        end = int(match.group("end"), 16)
+        offset = int(match.group("offset"), 16)
+        objfile = (match.group("objfile") or "").strip()
+        perms = match.group("perms") or ""
+        mapping = {
+            "start": hex(start),
+            "end": hex(end),
+            "size": hex(end - start),
+            "offset": hex(offset),
+            "perms": perms,
+            "objfile": objfile,
+            "name": os.path.basename(objfile) if objfile else f"[anon_{start >> 32:#x}]",
+            "kind": "",
+        }
+        mapping["kind"] = _classify_mapping(mapping)
+        mappings.append(mapping)
+    return mappings
+
+
+def _address_in_mapping(address: int, mapping: dict[str, Any]) -> bool:
+    start = _parse_int(mapping.get("start"))
+    end = _parse_int(mapping.get("end"))
+    return start is not None and end is not None and start <= address < end
+
+
+def _find_mapping(address: int, mappings: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for mapping in mappings:
+        if _address_in_mapping(address, mapping):
+            return mapping
+    return None
+
+
+def _address_mapping_info(
+    address: int | None,
+    mappings: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if address is None:
+        return None
+    mapping = _find_mapping(address, mappings)
+    if mapping is None:
+        return None
+    start = _parse_int(mapping.get("start"))
+    file_offset = _parse_int(mapping.get("offset"))
+    offset_in_mapping = address - start if start is not None else None
+    module_offset = (
+        file_offset + offset_in_mapping
+        if file_offset is not None and offset_in_mapping is not None
+        else None
+    )
+    return {
+        "mapping": mapping,
+        "offset_in_mapping": _hex_or_none(offset_in_mapping),
+        "file_offset": _hex_or_none(module_offset),
+        "module": _mapping_name(mapping),
+        "module_offset": _hex_or_none(address - start) if start is not None else None,
+        "module_file_offset": _hex_or_none(module_offset),
+    }
+
+
+def _parse_disassembly(console: str, current_address: int | None = None) -> list[dict[str, Any]]:
+    instructions: list[dict[str, Any]] = []
+    for line in console.splitlines():
+        match = _DISASSEMBLY_LINE_RE.match(line)
+        if match is None:
+            continue
+        address = int(match.group("addr"), 16)
+        assembly = match.group("asm").strip()
+        instruction = {
+            "address": hex(address),
+            "symbol": match.group("symbol") or "",
+            "asm": assembly,
+            "current": bool(match.group("current"))
+            or (current_address is not None and address == current_address),
+            "raw": line,
+        }
+        target = _parse_int(assembly)
+        if target is not None:
+            instruction["target"] = hex(target)
+        instructions.append(instruction)
+    return instructions
+
+
+def _read_memory_contents(payload: dict[str, Any]) -> bytes:
+    memory = payload.get("results", {}).get("memory", [])
+    if not isinstance(memory, list) or not memory:
+        return b""
+    contents = memory[0].get("contents", "")
+    if not isinstance(contents, str) or not contents:
+        return b""
+    try:
+        return bytes.fromhex(contents)
+    except ValueError:
+        return b""
 
 
 def _source_context(
@@ -2053,6 +2218,675 @@ async def gdb_memory_mappings(session_id: str) -> dict[str, Any]:
         return _error(exc)
 
 
+async def _evaluate_address(
+    session: GdbSession,
+    expression: str,
+    *,
+    timeout: float = 10.0,
+) -> tuple[dict[str, Any], int | None]:
+    _require_read_expression("expression", expression)
+    payload = _result(
+        session,
+        await session.execute(
+            f"-data-evaluate-expression {c_escape(expression)}",
+            timeout=timeout,
+        ),
+    )
+    value = payload.get("results", {}).get("value")
+    address = _parse_int(value)
+    if address is None:
+        address = _parse_int(expression)
+    return payload, address
+
+
+async def _structured_mappings(session: GdbSession) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    primary = _result(session, await session.execute("info proc mappings", timeout=10.0))
+    mappings = _parse_mappings(str(primary.get("console") or ""))
+    fallback: dict[str, Any] | None = None
+    if not mappings:
+        fallback = _result(
+            session,
+            await session.execute("maintenance info sections", timeout=10.0),
+        )
+        mappings = _parse_mappings(str(fallback.get("console") or ""))
+    payload = {
+        **primary,
+        "mappings": mappings,
+        "mapping_count": len(mappings),
+        "fallback": fallback,
+    }
+    return payload, mappings
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_vmmap_structured(
+    session_id: str,
+    address: str | None = None,
+    module: str | None = None,
+    executable: bool = False,
+    writable: bool = False,
+    include_gaps: bool = False,
+) -> dict[str, Any]:
+    """Return structured virtual memory mappings with address/module/perms filters."""
+
+    try:
+        if address is not None:
+            _require_read_expression("address", address)
+        if module is not None:
+            _require_single_line("module", module)
+        session = await manager.get(session_id)
+        address_payload: dict[str, Any] | None = None
+        address_value: int | None = None
+        if address is not None:
+            address_payload, address_value = await _evaluate_address(session, address)
+        payload, mappings = await _structured_mappings(session)
+        filtered = mappings
+        if address_value is not None:
+            filtered = [item for item in filtered if _address_in_mapping(address_value, item)]
+        if module:
+            lowered = module.lower()
+            filtered = [
+                item
+                for item in filtered
+                if lowered in str(item.get("objfile", "")).lower()
+                or lowered in str(item.get("name", "")).lower()
+            ]
+        if executable:
+            filtered = [item for item in filtered if "x" in str(item.get("perms", ""))]
+        if writable:
+            filtered = [item for item in filtered if "w" in str(item.get("perms", ""))]
+
+        gaps: list[dict[str, str]] = []
+        if include_gaps:
+            ordered = sorted(
+                mappings,
+                key=lambda item: _parse_int(item.get("start")) or 0,
+            )
+            for left, right in zip(ordered, ordered[1:], strict=False):
+                left_end = _parse_int(left.get("end"))
+                right_start = _parse_int(right.get("start"))
+                if left_end is not None and right_start is not None and left_end < right_start:
+                    gaps.append(
+                        {
+                            "start": hex(left_end),
+                            "end": hex(right_start),
+                            "size": hex(right_start - left_end),
+                        }
+                    )
+        return {
+            **payload,
+            "ok": bool(payload.get("ok")),
+            "filters": {
+                "address": address,
+                "module": module,
+                "executable": executable,
+                "writable": writable,
+            },
+            "address": _hex_or_none(address_value),
+            "address_evaluation": address_payload,
+            "mappings": filtered,
+            "all_mapping_count": len(mappings),
+            "mapping_count": len(filtered),
+            "gaps": gaps,
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_address_info(
+    session_id: str,
+    expression: str,
+    read_string: bool = True,
+    string_max_bytes: int = 256,
+) -> dict[str, Any]:
+    """Resolve an address expression to mapping, module offset, symbol, and string context."""
+
+    try:
+        if not 1 <= string_max_bytes <= 4096:
+            raise ValueError("string_max_bytes must be between 1 and 4096")
+        session = await manager.get(session_id)
+        evaluation, address = await _evaluate_address(session, expression)
+        vmmap_payload, mappings = await _structured_mappings(session)
+        mapping_info = _address_mapping_info(address, mappings)
+        symbol: dict[str, Any] | None = None
+        string_payload: dict[str, Any] | None = None
+        string_value = ""
+        if address is not None:
+            symbol_result = _result(
+                session,
+                await session.execute(f"info symbol {hex(address)}", timeout=5.0),
+            )
+            symbol = {
+                "ok": symbol_result.get("ok"),
+                "console": symbol_result.get("console"),
+            }
+            if read_string and mapping_info is not None:
+                perms = str(mapping_info["mapping"].get("perms", ""))
+                if "r" in perms or not perms:
+                    string_payload = await gdb_read_c_string(
+                        session_id,
+                        hex(address),
+                        max_bytes=string_max_bytes,
+                    )
+                    string_value = str(string_payload.get("string") or "")
+        return {
+            "ok": bool(evaluation.get("ok")),
+            "session_id": session_id,
+            "expression": expression,
+            "address": _hex_or_none(address),
+            "evaluation": evaluation,
+            "mapping_info": mapping_info,
+            "symbol": symbol,
+            "string": string_value,
+            "string_result": string_payload,
+            "vmmap_ok": vmmap_payload.get("ok"),
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_telescope(
+    session_id: str,
+    address: str = "$sp",
+    count: int = 8,
+    pointer_size: int = 8,
+    max_depth: int = 1,
+    reverse: bool = False,
+) -> dict[str, Any]:
+    """Read pointer-sized stack/memory slots and annotate recursively dereferenced values."""
+
+    try:
+        if not 1 <= count <= 128:
+            raise ValueError("count must be between 1 and 128")
+        if pointer_size not in {4, 8}:
+            raise ValueError("pointer_size must be 4 or 8")
+        if not 0 <= max_depth <= 4:
+            raise ValueError("max_depth must be between 0 and 4")
+        session = await manager.get(session_id)
+        evaluation, start = await _evaluate_address(session, address)
+        if start is None:
+            return {
+                "ok": False,
+                "session_id": session_id,
+                "error": f"Could not resolve address expression: {address}",
+                "evaluation": evaluation,
+            }
+        if reverse:
+            start -= count * pointer_size
+        vmmap_payload, mappings = await _structured_mappings(session)
+        memory = _result(
+            session,
+            await session.execute(
+                f"-data-read-memory-bytes {c_escape(hex(start))} {count * pointer_size}",
+                timeout=10.0,
+            ),
+        )
+        data = _read_memory_contents(memory)
+        entries: list[dict[str, Any]] = []
+        for index in range(count):
+            offset = index * pointer_size
+            chunk = data[offset : offset + pointer_size]
+            if len(chunk) < pointer_size:
+                break
+            value = int.from_bytes(chunk, "little")
+            entry: dict[str, Any] = {
+                "index": index,
+                "address": hex(start + offset),
+                "value": hex(value),
+                "mapping_info": _address_mapping_info(value, mappings),
+                "chain": [],
+            }
+            current = value
+            for depth in range(max_depth):
+                current_info = _address_mapping_info(current, mappings)
+                if current_info is None:
+                    break
+                perms = str(current_info["mapping"].get("perms", ""))
+                if "r" not in perms and perms:
+                    break
+                deref = _result(
+                    session,
+                    await session.execute(
+                        f"-data-read-memory-bytes {c_escape(hex(current))} {pointer_size}",
+                        timeout=5.0,
+                    ),
+                )
+                deref_data = _read_memory_contents(deref)
+                if len(deref_data) < pointer_size:
+                    break
+                next_value = int.from_bytes(deref_data[:pointer_size], "little")
+                entry["chain"].append(
+                    {
+                        "depth": depth + 1,
+                        "address": hex(current),
+                        "value": hex(next_value),
+                        "mapping_info": _address_mapping_info(next_value, mappings),
+                    }
+                )
+                current = next_value
+            entries.append(entry)
+        return {
+            "ok": bool(memory.get("ok")),
+            "session_id": session_id,
+            "start": hex(start),
+            "address_expression": address,
+            "count": count,
+            "pointer_size": pointer_size,
+            "entries": entries,
+            "evaluation": evaluation,
+            "memory": memory,
+            "vmmap_ok": vmmap_payload.get("ok"),
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_nearpc(
+    session_id: str,
+    pc: str = "$pc",
+    lines: int = 12,
+    reverse: int = 4,
+    instruction_bytes: int = 8,
+) -> dict[str, Any]:
+    """Disassemble near an address and return parsed instruction rows."""
+
+    try:
+        if not 1 <= lines <= 200:
+            raise ValueError("lines must be between 1 and 200")
+        if not 0 <= reverse <= 100:
+            raise ValueError("reverse must be between 0 and 100")
+        if not 1 <= instruction_bytes <= 16:
+            raise ValueError("instruction_bytes must be between 1 and 16")
+        session = await manager.get(session_id)
+        evaluation, address = await _evaluate_address(session, pc)
+        start_expression = pc
+        if address is not None and reverse:
+            start_expression = hex(max(0, address - reverse * instruction_bytes))
+        command = f"x/{lines}i {start_expression}"
+        disassembly = _result(session, await session.execute(command, timeout=10.0))
+        instructions = _parse_disassembly(str(disassembly.get("console") or ""), address)
+        vmmap_payload, mappings = await _structured_mappings(session)
+        for instruction in instructions:
+            target = _parse_int(instruction.get("target"))
+            addr = _parse_int(instruction.get("address"))
+            instruction["address_info"] = _address_mapping_info(addr, mappings)
+            instruction["target_info"] = _address_mapping_info(target, mappings)
+        return {
+            **disassembly,
+            "pc": _hex_or_none(address),
+            "pc_expression": pc,
+            "start_expression": start_expression,
+            "instructions": instructions,
+            "evaluation": evaluation,
+            "vmmap_ok": vmmap_payload.get("ok"),
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_piebase(
+    session_id: str,
+    offset: int = 0,
+    module: str | None = None,
+) -> dict[str, Any]:
+    """Calculate a runtime virtual address from a PIE/module base plus offset."""
+
+    try:
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        if module is not None:
+            _require_single_line("module", module)
+        session = await manager.get(session_id)
+        payload, mappings = await _structured_mappings(session)
+        candidates = mappings
+        if module:
+            lowered = module.lower()
+            candidates = [
+                item
+                for item in candidates
+                if lowered in str(item.get("objfile", "")).lower()
+                or lowered in str(item.get("name", "")).lower()
+            ]
+        elif session.program:
+            program = os.path.basename(session.program)
+            candidates = [
+                item
+                for item in candidates
+                if os.path.basename(str(item.get("objfile") or "")) == program
+            ] or candidates
+        candidates = sorted(candidates, key=lambda item: _parse_int(item.get("start")) or 0)
+        base = _parse_int(candidates[0].get("start")) if candidates else None
+        return {
+            "ok": bool(payload.get("ok")) and base is not None,
+            "session_id": session_id,
+            "module": module,
+            "base": _hex_or_none(base),
+            "offset": hex(offset),
+            "address": _hex_or_none(base + offset if base is not None else None),
+            "mapping": candidates[0] if candidates else None,
+            "mappings_considered": len(candidates),
+            "vmmap": payload,
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=SESSION_MUTATION)
+async def gdb_break_rva(
+    session_id: str,
+    offset: int,
+    module: str | None = None,
+    temporary: bool = False,
+    hardware: bool = False,
+) -> dict[str, Any]:
+    """Set a breakpoint at module PIE base plus an RVA-style offset."""
+
+    try:
+        base = await gdb_piebase(session_id, offset=offset, module=module)
+        address = base.get("address")
+        if not base.get("ok") or not isinstance(address, str):
+            return {"ok": False, "error": "Could not calculate PIE base", "piebase": base}
+        breakpoint = await gdb_set_breakpoint(
+            session_id,
+            f"*{address}",
+            temporary=temporary,
+            hardware=hardware,
+        )
+        return {
+            "ok": bool(breakpoint.get("ok")),
+            "address": address,
+            "piebase": base,
+            "breakpoint": breakpoint,
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_pwn_context(
+    session_id: str,
+    max_frames: int = 10,
+    telescope_count: int = 8,
+    nearpc_lines: int = 12,
+) -> dict[str, Any]:
+    """Return a pwndbg-style structured context for stripped/optimized binaries."""
+
+    try:
+        _require_max_frames(max_frames)
+        if not 1 <= telescope_count <= 64:
+            raise ValueError("telescope_count must be between 1 and 64")
+        if not 1 <= nearpc_lines <= 100:
+            raise ValueError("nearpc_lines must be between 1 and 100")
+        await manager.get(session_id)
+        (
+            location,
+            backtrace,
+            registers,
+            pc,
+            sp,
+            vmmap,
+        ) = await asyncio.gather(
+            gdb_current_location(session_id),
+            gdb_backtrace(session_id, max_frames=max_frames),
+            gdb_registers(session_id),
+            gdb_read_register(session_id, "pc"),
+            gdb_read_register(session_id, "sp"),
+            gdb_vmmap_structured(session_id),
+        )
+        nearpc = await gdb_nearpc(session_id, lines=nearpc_lines)
+        telescope = await gdb_telescope(session_id, count=telescope_count)
+        pc_info = None
+        pc_value = pc.get("value")
+        if isinstance(pc_value, str):
+            pc_info = await gdb_address_info(session_id, pc_value, read_string=False)
+        return {
+            "ok": any(
+                bool(item.get("ok"))
+                for item in (location, backtrace, registers, pc, sp, vmmap, nearpc, telescope)
+            ),
+            "session_id": session_id,
+            "summary": "\n".join(
+                line
+                for line in (
+                    f"pc: {pc.get('value')}" if pc.get("value") else "",
+                    f"sp: {sp.get('value')}" if sp.get("value") else "",
+                    f"mappings: {vmmap.get('mapping_count')}"
+                    if vmmap.get("mapping_count") is not None
+                    else "",
+                )
+                if line
+            ),
+            "location": location,
+            "backtrace": backtrace,
+            "registers": registers,
+            "pc": pc,
+            "sp": sp,
+            "pc_info": pc_info,
+            "nearpc": nearpc,
+            "stack": telescope,
+            "vmmap": vmmap,
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+async def _run_readelf(file_path: str, args: list[str], timeout: float) -> dict[str, Any]:
+    readelf = shutil.which("readelf")
+    if readelf is None:
+        return {"ok": False, "error": "readelf is not available on PATH"}
+    process = await asyncio.create_subprocess_exec(
+        readelf,
+        "-W",
+        *args,
+        file_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
+        return {"ok": False, "error": f"readelf timed out after {timeout} seconds"}
+    return {
+        "ok": process.returncode == 0,
+        "returncode": process.returncode,
+        "stdout": stdout.decode(errors="replace"),
+        "stderr": stderr.decode(errors="replace"),
+    }
+
+
+async def _resolve_elf_file(
+    *,
+    session_id: str | None,
+    file_path: str | None,
+) -> tuple[str, GdbSession | None]:
+    if file_path is not None:
+        _require_single_line("file_path", file_path)
+        return file_path, None
+    if session_id is None:
+        raise ValueError("Provide session_id or file_path")
+    session = await manager.get(session_id)
+    if not session.program:
+        raise ValueError("Session has no loaded program; provide file_path")
+    return session.program, session
+
+
+def _parse_elf_header(header: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for line in header.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        fields[key.strip().lower().replace(" ", "_")] = value.strip()
+    return fields
+
+
+def _parse_checksec(
+    header: str,
+    program_headers: str,
+    dynamic: str,
+    symbols: str,
+) -> dict[str, Any]:
+    header_fields = _parse_elf_header(header)
+    elf_type = header_fields.get("type", "")
+    gnu_stack_line = next(
+        (line for line in program_headers.splitlines() if "GNU_STACK" in line),
+        "",
+    )
+    has_gnu_relro = "GNU_RELRO" in program_headers
+    bind_now = "BIND_NOW" in dynamic or "(FLAGS)" in dynamic and "NOW" in dynamic
+    canary = "__stack_chk_fail" in symbols
+    stack_exec = False
+    if gnu_stack_line:
+        parts = gnu_stack_line.split()
+        flags = parts[-1] if parts else ""
+        stack_exec = "E" in flags
+    if has_gnu_relro and bind_now:
+        relro = "Full RELRO"
+    elif has_gnu_relro:
+        relro = "Partial RELRO"
+    else:
+        relro = "No RELRO"
+    return {
+        "arch": header_fields.get("machine", ""),
+        "type": elf_type,
+        "entry": header_fields.get("entry_point_address", ""),
+        "pie": "DYN" in elf_type,
+        "nx": not stack_exec,
+        "canary": canary,
+        "relro": relro,
+        "bind_now": bind_now,
+        "gnu_stack": gnu_stack_line.strip(),
+    }
+
+
+def _parse_sections(sections_output: str) -> list[dict[str, str]]:
+    sections: list[dict[str, str]] = []
+    section_re = re.compile(
+        r"^\s*\[\s*(?P<index>\d+)\]\s+"
+        r"(?P<name>\S+)\s+"
+        r"(?P<type>\S+)\s+"
+        r"(?P<addr>[0-9A-Fa-f]+)\s+"
+        r"(?P<off>[0-9A-Fa-f]+)\s+"
+        r"(?P<size>[0-9A-Fa-f]+)\s+"
+        r"(?P<entsize>[0-9A-Fa-f]+)\s+"
+        r"(?P<flags>\S*)"
+    )
+    for line in sections_output.splitlines():
+        match = section_re.match(line)
+        if match is None:
+            continue
+        item = match.groupdict()
+        item["addr"] = hex(int(item["addr"], 16))
+        item["offset"] = hex(int(item.pop("off"), 16))
+        item["size"] = hex(int(item["size"], 16))
+        sections.append(item)
+    return sections
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_checksec(
+    session_id: str | None = None,
+    file_path: str | None = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Return ELF hardening settings such as PIE, NX, RELRO, and stack canary."""
+
+    try:
+        path, session = await _resolve_elf_file(session_id=session_id, file_path=file_path)
+        header, program_headers, dynamic, symbols, notes = await asyncio.gather(
+            _run_readelf(path, ["-h"], timeout),
+            _run_readelf(path, ["-l"], timeout),
+            _run_readelf(path, ["-d"], timeout),
+            _run_readelf(path, ["-s"], timeout),
+            _run_readelf(path, ["-n"], timeout),
+        )
+        ok = bool(header.get("ok") and program_headers.get("ok"))
+        security = _parse_checksec(
+            str(header.get("stdout") or ""),
+            str(program_headers.get("stdout") or ""),
+            str(dynamic.get("stdout") or ""),
+            str(symbols.get("stdout") or ""),
+        )
+        notes_stdout = str(notes.get("stdout") or "")
+        build_id_match = _BUILD_ID_RE.search(notes_stdout)
+        security["build_id"] = build_id_match.group("build_id") if build_id_match else ""
+        security["ibt"] = "IBT" in notes_stdout
+        security["shstk"] = "SHSTK" in notes_stdout
+        return {
+            "ok": ok,
+            "session_id": session.session_id if session else session_id,
+            "file_path": path,
+            "security": security,
+            "commands": {
+                "header": header,
+                "program_headers": program_headers,
+                "dynamic": dynamic,
+                "symbols": symbols,
+                "notes": notes,
+            },
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_elf_info(
+    session_id: str | None = None,
+    file_path: str | None = None,
+    include_raw: bool = False,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Return ELF header, security, section, segment, and build-id metadata."""
+
+    try:
+        path, session = await _resolve_elf_file(session_id=session_id, file_path=file_path)
+        header, sections, program_headers, dynamic, notes = await asyncio.gather(
+            _run_readelf(path, ["-h"], timeout),
+            _run_readelf(path, ["-S"], timeout),
+            _run_readelf(path, ["-l"], timeout),
+            _run_readelf(path, ["-d"], timeout),
+            _run_readelf(path, ["-n"], timeout),
+        )
+        symbols = await _run_readelf(path, ["-s"], timeout)
+        header_stdout = str(header.get("stdout") or "")
+        sections_stdout = str(sections.get("stdout") or "")
+        notes_stdout = str(notes.get("stdout") or "")
+        build_id_match = _BUILD_ID_RE.search(notes_stdout)
+        payload: dict[str, Any] = {
+            "ok": bool(header.get("ok")),
+            "session_id": session.session_id if session else session_id,
+            "file_path": path,
+            "header": _parse_elf_header(header_stdout),
+            "sections": _parse_sections(sections_stdout),
+            "section_count": len(_parse_sections(sections_stdout)),
+            "security": _parse_checksec(
+                header_stdout,
+                str(program_headers.get("stdout") or ""),
+                str(dynamic.get("stdout") or ""),
+                str(symbols.get("stdout") or ""),
+            ),
+            "build_id": build_id_match.group("build_id") if build_id_match else "",
+        }
+        if include_raw:
+            payload["raw"] = {
+                "header": header,
+                "sections": sections,
+                "program_headers": program_headers,
+                "dynamic": dynamic,
+                "notes": notes,
+                "symbols": symbols,
+            }
+        return payload
+    except Exception as exc:
+        return _error(exc)
+
+
 @mcp.tool(annotations=SESSION_MUTATION)
 async def gdb_set_remote_paths(
     session_id: str,
@@ -2204,8 +3038,11 @@ async def gdb_command_reference() -> dict[str, Any]:
             "gdb_set_breakpoint",
             "gdb_run_and_context",
             "gdb_context",
+            "gdb_pwn_context",
+            "gdb_address_info",
             "gdb_read_register",
-            "gdb_disassemble_around_pc",
+            "gdb_nearpc",
+            "gdb_telescope",
             "gdb_continue_and_context",
             "gdb_close_session",
         ],
@@ -2224,12 +3061,28 @@ async def gdb_command_reference() -> dict[str, Any]:
                 "gdb_read_register",
                 "gdb_register_names",
                 "gdb_read_memory",
+                "gdb_pwn_context",
+                "gdb_address_info",
+                "gdb_telescope",
+                "gdb_vmmap_structured",
             ],
             "source": [
                 "gdb_source",
                 "gdb_find_source",
                 "gdb_disassemble",
                 "gdb_disassemble_around_pc",
+                "gdb_nearpc",
+            ],
+            "binary_analysis": [
+                "gdb_pwn_context",
+                "gdb_vmmap_structured",
+                "gdb_address_info",
+                "gdb_telescope",
+                "gdb_nearpc",
+                "gdb_piebase",
+                "gdb_break_rva",
+                "gdb_checksec",
+                "gdb_elf_info",
             ],
         },
         "common_mi_commands": [
