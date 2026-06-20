@@ -11,6 +11,7 @@ from gdb_mcp.server import (
     gdb_breakpoint_commands,
     gdb_breakpoint_condition,
     gdb_call_function,
+    gdb_capabilities,
     gdb_checksec,
     gdb_close_idle_sessions,
     gdb_command_reference,
@@ -84,6 +85,7 @@ class ServerContractTests(unittest.TestCase):
         names = [tool.name for tool in tools]
         self.assertEqual(len(names), len(set(names)))
         self.assertIn("gdb_server_health", names)
+        self.assertIn("gdb_capabilities", names)
         self.assertIn("gdb_recent_events", names)
         self.assertIn("gdb_attach", names)
         self.assertIn("gdb_load_core", names)
@@ -141,6 +143,7 @@ class ServerContractTests(unittest.TestCase):
             "gdb_register_names",
             "gdb_disassemble_around_pc",
             "gdb_command_reference",
+            "gdb_capabilities",
             "gdb_vmmap_structured",
             "gdb_address_info",
             "gdb_telescope",
@@ -352,6 +355,10 @@ class ServerContractTests(unittest.TestCase):
                 self.assertTrue((await gdb_recent_commands(session_id))["ok"])
                 self.assertTrue((await gdb_session_diagnostics(session_id))["ok"])
                 self.assertTrue((await gdb_command_reference())["ok"])
+                capabilities = await gdb_capabilities()
+                self.assertTrue(capabilities["ok"])
+                self.assertIn("binary_analysis", capabilities["workflows"])
+                self.assertEqual(capabilities["session_model"]["multi_session"], True)
                 previous = runtime_config.allow_unsafe_execute
                 runtime_config.allow_unsafe_execute = True
                 try:

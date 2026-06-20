@@ -85,6 +85,23 @@ def _result(session: GdbSession, result: CommandResult) -> dict[str, Any]:
     return result.to_dict(session.output_limit_chars)
 
 
+async def _executable_version(path: str | None, *args: str) -> str | None:
+    if path is None:
+        return None
+    try:
+        process = await asyncio.create_subprocess_exec(
+            path,
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=2.0)
+    except Exception:
+        return None
+    text = stdout.decode(errors="replace").strip()
+    return text.splitlines()[0] if text else None
+
+
 def _compact_frame(frame: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(frame, dict):
         return None
@@ -3105,6 +3122,134 @@ async def gdb_command_reference() -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY)
+async def gdb_capabilities() -> dict[str, Any]:
+    """Return a workflow-oriented capability index for agent tool selection."""
+
+    return {
+        "ok": True,
+        "design_notes": [
+            {
+                "source": "Ipiano/gdb-mcp",
+                "url": "https://github.com/Ipiano/gdb-mcp",
+                "borrowed": (
+                    "Expose a workflow-oriented reference for sessions, threads, "
+                    "breakpoints, execution, and data inspection."
+                ),
+            },
+            {
+                "source": "signal-slot/mcp-gdb",
+                "url": "https://github.com/signal-slot/mcp-gdb",
+                "borrowed": (
+                    "Keep simple GDB command equivalents visible so agents can map "
+                    "natural debugging requests to dedicated tools."
+                ),
+            },
+            {
+                "source": "maxholman/mcp-gdbmi",
+                "url": "https://github.com/maxholman/mcp-gdbmi",
+                "borrowed": (
+                    "Treat GDB/MI verbosity as an explicit capability concern and "
+                    "steer agents toward compact context tools before raw payloads."
+                ),
+            },
+            {
+                "source": "pansila/mcp_server_gdb",
+                "url": "https://github.com/pansila/mcp_server_gdb",
+                "borrowed": (
+                    "Describe concurrent multi-session debugging as a first-class "
+                    "server capability."
+                ),
+            },
+        ],
+        "session_model": {
+            "multi_session": True,
+            "explicit_session_id_required": True,
+            "max_sessions": runtime_config.max_sessions,
+            "recommended_start": ["gdb_create_session", "gdb_list_sessions"],
+            "recommended_finish": ["gdb_close_session", "gdb_close_idle_sessions"],
+        },
+        "workflows": {
+            "local_program": [
+                "gdb_create_session",
+                "gdb_set_breakpoint",
+                "gdb_run_and_context",
+                "gdb_context",
+            ],
+            "running_process": ["gdb_attach", "gdb_context", "gdb_detach"],
+            "core_dump": ["gdb_load_core", "gdb_threads", "gdb_backtrace", "gdb_context"],
+            "remote_gdbserver": [
+                "gdb_connect_gdbserver",
+                "gdb_set_remote_paths",
+                "gdb_gdbserver_status",
+                "gdb_detach_gdbserver",
+            ],
+            "managed_gdbserver": [
+                "gdb_launch_gdbserver",
+                "gdb_gdbserver_status",
+                "gdb_detach_gdbserver",
+            ],
+            "source_debugging": [
+                "gdb_source",
+                "gdb_find_source",
+                "gdb_backtrace",
+                "gdb_frame_variables",
+            ],
+            "binary_analysis": [
+                "gdb_pwn_context",
+                "gdb_vmmap_structured",
+                "gdb_address_info",
+                "gdb_nearpc",
+                "gdb_telescope",
+                "gdb_piebase",
+                "gdb_break_rva",
+                "gdb_checksec",
+                "gdb_elf_info",
+            ],
+            "reverse_debugging": [
+                "gdb_start_recording",
+                "gdb_reverse_continue_and_context",
+                "gdb_reverse_step_and_context",
+                "gdb_reverse_next_and_context",
+                "gdb_stop_recording",
+            ],
+            "diagnostics": [
+                "gdb_server_health",
+                "gdb_session_diagnostics",
+                "gdb_recent_commands",
+                "gdb_recent_events",
+                "gdb_command_reference",
+            ],
+        },
+        "output_strategy": {
+            "default_limit_chars": runtime_config.output_limit_chars,
+            "prefer_compact_tools": [
+                "gdb_run_and_context",
+                "gdb_continue_and_context",
+                "gdb_step_and_context",
+                "gdb_next_and_context",
+                "gdb_context",
+                "gdb_pwn_context",
+            ],
+            "raw_payload_escape_hatch": (
+                "Set include_raw=true only when compact fields are insufficient."
+            ),
+            "hex_compaction": "Full hexadecimal strings are normalized to shorter canonical hex.",
+        },
+        "safety": {
+            "unsafe_enabled": runtime_config.allow_unsafe_execute,
+            "unsafe_tools": [
+                "gdb_execute",
+                "gdb_call_function",
+                "gdb_set_variable",
+                "gdb_write_memory",
+                "gdb_breakpoint_commands",
+            ],
+            "safe_expression_tools_reject_calls_and_mutations": True,
+        },
+    }
+
+
+@mcp.tool(annotations=READ_ONLY)
 async def gdb_server_health() -> dict[str, Any]:
     """Report server capabilities, safety mode, dependencies, and session count."""
 
@@ -3112,16 +3257,27 @@ async def gdb_server_health() -> dict[str, Any]:
         package_version = version("gdb-mcp")
     except PackageNotFoundError:
         package_version = "0+unknown"
+    gdb_path = shutil.which("gdb")
+    gdbserver_path = shutil.which("gdbserver")
+    gdb_version, gdbserver_version = await asyncio.gather(
+        _executable_version(gdb_path, "--version"),
+        _executable_version(gdbserver_path, "--version"),
+    )
     sessions = await manager.list()
     return {
         "ok": True,
         "name": "gdb-mcp",
         "version": package_version,
-        "gdb_available": shutil.which("gdb") is not None,
-        "gdbserver_available": shutil.which("gdbserver") is not None,
+        "gdb_available": gdb_path is not None,
+        "gdb_path": gdb_path,
+        "gdb_version": gdb_version,
+        "gdbserver_available": gdbserver_path is not None,
+        "gdbserver_path": gdbserver_path,
+        "gdbserver_version": gdbserver_version,
         "unsafe_execute_enabled": runtime_config.allow_unsafe_execute,
         "max_sessions": runtime_config.max_sessions,
         "output_limit_chars": runtime_config.output_limit_chars,
+        "capability_tool": "gdb_capabilities",
         "session_count": len(sessions),
         "sessions": sessions,
     }

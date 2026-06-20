@@ -140,7 +140,8 @@ and module-offset oriented.
 | `gdb_recent_commands` | Read | `session_id`, `limit` | Return recent commands sent to GDB. |
 | `gdb_session_diagnostics` | Read | `session_id` | Return session state plus recent commands/events. |
 | `gdb_command_reference` | Read | none | Return common safe tool flows and GDB/MI command equivalents. |
-| `gdb_server_health` | Read | none | Report version, dependency availability, safety mode, and sessions. |
+| `gdb_capabilities` | Read | none | Return workflow-oriented capability groups, output strategy, safety posture, and reference-project notes. |
+| `gdb_server_health` | Read | none | Report version, dependency paths/versions, safety mode, output limits, and sessions. |
 
 ## Advanced
 
