@@ -1,6 +1,6 @@
 {
   "name": "gdb-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Multi-session GDB and gdbserver debugging through MCP.",
   "author": {
     "name": "BeaCox",

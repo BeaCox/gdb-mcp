@@ -70,7 +70,7 @@ sudo apt-get install -y gcc gdb gdbserver
 ### Codex
 
 ```bash
-codex plugin marketplace add BeaCox/gdb-mcp --ref v0.3.0
+codex plugin marketplace add BeaCox/gdb-mcp --ref v0.3.1
 codex plugin add gdb-mcp@beacox
 ```
 
@@ -78,7 +78,7 @@ Or register the MCP server directly:
 
 ```bash
 codex mcp add gdb -- \
-  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.3.0 gdb-mcp
+  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.3.1 gdb-mcp
 ```
 
 ### Claude Code
@@ -92,7 +92,7 @@ Or register the MCP server directly:
 
 ```bash
 claude mcp add --scope user gdb -- \
-  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.3.0 gdb-mcp
+  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.3.1 gdb-mcp
 ```
 
 ### From a Checkout
@@ -109,8 +109,8 @@ claude mcp add --scope user gdb -- uv run gdb-mcp
 The universal installer is also available:
 
 ```bash
-uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.3.0 gdb-mcp --install
-uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.3.0 gdb-mcp --install --direct
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.3.1 gdb-mcp --install
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.3.1 gdb-mcp --install --direct
 ```
 
 Print portable client configuration:

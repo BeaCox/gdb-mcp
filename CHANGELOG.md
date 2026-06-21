@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-22
+
+### Fixed
+
+- Pinned Codex plugin and direct `uvx` install sources to the `v0.3.1` release
+  tag instead of the mutable `main` branch, avoiding repeated GitHub ref checks
+  during MCP startup.
+
+### Changed
+
+- Expanded CLI, lazy proxy JSON-RPC, and command-result truncation test coverage
+  for the lazy startup path.
+
 ### Added
 
 - Compact context tools for agent workflows: `gdb_context`,

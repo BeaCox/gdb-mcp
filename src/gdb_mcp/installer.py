@@ -15,7 +15,7 @@ MARKETPLACE_SOURCE = "BeaCox/gdb-mcp"
 MARKETPLACE_NAME = "beacox"
 PLUGIN_NAME = "gdb-mcp"
 MCP_SERVER_NAME = "gdb"
-RELEASE_TAG = "v0.3.0"
+RELEASE_TAG = "v0.3.1"
 PACKAGE_SOURCE = f"git+https://github.com/BeaCox/gdb-mcp.git@{RELEASE_TAG}"
 
 
