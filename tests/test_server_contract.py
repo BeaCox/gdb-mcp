@@ -7,6 +7,7 @@ from pathlib import Path
 from gdb_mcp.server import (
     gdb_address_info,
     gdb_attach,
+    gdb_binary_summary,
     gdb_break_rva,
     gdb_breakpoint_commands,
     gdb_breakpoint_condition,
@@ -31,6 +32,7 @@ from gdb_mcp.server import (
     gdb_find_source,
     gdb_frame_variables,
     gdb_gdbserver_status,
+    gdb_got,
     gdb_info_files,
     gdb_kill,
     gdb_load_core,
@@ -44,6 +46,7 @@ from gdb_mcp.server import (
     gdb_read_register,
     gdb_recent_commands,
     gdb_record_status,
+    gdb_register_context,
     gdb_register_names,
     gdb_reverse_continue,
     gdb_reverse_continue_and_context,
@@ -53,6 +56,7 @@ from gdb_mcp.server import (
     gdb_reverse_next_and_context,
     gdb_reverse_step,
     gdb_reverse_step_and_context,
+    gdb_rva_info,
     gdb_search_memory,
     gdb_session_diagnostics,
     gdb_set_breakpoint,
@@ -66,6 +70,7 @@ from gdb_mcp.server import (
     gdb_start_recording,
     gdb_step_and_context,
     gdb_stop_recording,
+    gdb_symbols,
     gdb_telescope,
     gdb_thread_apply_all_backtrace,
     gdb_vmmap_structured,
@@ -151,6 +156,11 @@ class ServerContractTests(unittest.TestCase):
             "gdb_piebase",
             "gdb_break_rva",
             "gdb_pwn_context",
+            "gdb_binary_summary",
+            "gdb_register_context",
+            "gdb_symbols",
+            "gdb_got",
+            "gdb_rva_info",
             "gdb_checksec",
             "gdb_elf_info",
         ):
@@ -344,6 +354,9 @@ class ServerContractTests(unittest.TestCase):
                 self.assertTrue((await gdb_telescope(session_id, "0x7fffffffe000"))["ok"])
                 self.assertTrue((await gdb_nearpc(session_id))["ok"])
                 self.assertTrue((await gdb_piebase(session_id, offset=0x100))["ok"])
+                self.assertTrue((await gdb_rva_info(session_id, offset=0x100))["ok"])
+                self.assertTrue((await gdb_register_context(session_id))["ok"])
+                self.assertTrue((await gdb_symbols(session_id, query="main"))["ok"])
                 self.assertTrue((await gdb_break_rva(session_id, offset=0x100))["ok"])
                 self.assertTrue((await gdb_pwn_context(session_id))["ok"])
                 self.assertTrue(
@@ -424,6 +437,9 @@ class ServerContractTests(unittest.TestCase):
             self.assertIn('info symbol 0x401004', commands)
             self.assertIn('-data-read-memory-bytes "0x7fffffffe000" 64', commands)
             self.assertIn("x/12i 0x400fe4", commands)
+            self.assertIn('info symbol 0x400100', commands)
+            self.assertIn("-data-list-register-values x", commands)
+            self.assertIn("info functions main", commands)
             self.assertIn("break *0x400100", commands)
             self.assertIn('-gdb-set sysroot "/tmp/sysroot"', commands)
             self.assertIn("print puts(1)", commands)
@@ -446,10 +462,16 @@ class ServerContractTests(unittest.TestCase):
     def test_elf_tools_reject_missing_target(self) -> None:
         checksec = asyncio.run(gdb_checksec())
         elf_info = asyncio.run(gdb_elf_info())
+        got = asyncio.run(gdb_got())
+        binary_summary = asyncio.run(gdb_binary_summary())
         self.assertFalse(checksec["ok"])
         self.assertFalse(elf_info["ok"])
+        self.assertFalse(got["ok"])
+        self.assertFalse(binary_summary["ok"])
         self.assertIn("Provide session_id or file_path", checksec["error"])
         self.assertIn("Provide session_id or file_path", elf_info["error"])
+        self.assertIn("Provide session_id or file_path", got["error"])
+        self.assertIn("Provide session_id or file_path", binary_summary["error"])
 
     def test_context_rejects_invalid_frame_count(self) -> None:
         result = asyncio.run(gdb_context("missing", max_frames=0))

@@ -434,6 +434,10 @@ _DISASSEMBLY_LINE_RE = re.compile(
     r"(?P<asm>.*)$"
 )
 _BUILD_ID_RE = re.compile(r"Build ID:\s*(?P<build_id>[0-9A-Fa-f]+)")
+_READELF_RELOCATION_RE = re.compile(r"^\s*(?P<offset>[0-9A-Fa-f]+)\s+")
+_GDB_SYMBOL_RE = re.compile(
+    r"^\s*(?:(?P<address>0x[0-9a-fA-F]+)\s+)?(?P<declaration>.+?);?\s*$"
+)
 
 
 def _require_read_expression(name: str, expression: str) -> None:
@@ -2806,6 +2810,125 @@ def _parse_sections(sections_output: str) -> list[dict[str, str]]:
     return sections
 
 
+def _parse_readelf_relocations(relocations_output: str) -> list[dict[str, Any]]:
+    relocations: list[dict[str, Any]] = []
+    for line in relocations_output.splitlines():
+        if _READELF_RELOCATION_RE.match(line) is None:
+            continue
+        columns = line.split()
+        if len(columns) < 3:
+            continue
+        symbol = ""
+        addend = ""
+        if len(columns) >= 5:
+            symbol = columns[4]
+            if len(columns) > 5:
+                addend = " ".join(columns[5:])
+        relocations.append(
+            {
+                "offset": hex(int(columns[0], 16)),
+                "info": columns[1] if len(columns) > 1 else "",
+                "type": columns[2],
+                "symbol_value": f"0x{columns[3]}" if len(columns) > 3 else "",
+                "symbol": symbol,
+                "addend": addend,
+                "raw": line.strip(),
+            }
+        )
+    return relocations
+
+
+def _parse_gdb_symbols(console: str, limit: int) -> list[dict[str, str]]:
+    symbols: list[dict[str, str]] = []
+    current_file = ""
+    for line in console.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("All "):
+            continue
+        if stripped.endswith(":") and not stripped.startswith("0x"):
+            current_file = stripped[:-1]
+            continue
+        match = _GDB_SYMBOL_RE.match(stripped)
+        if match is None:
+            continue
+        declaration = match.group("declaration").rstrip(";")
+        if declaration.startswith(("Non-debugging", "File ")):
+            continue
+        symbols.append(
+            {
+                "address": match.group("address") or "",
+                "declaration": declaration,
+                "file": current_file,
+                "name": declaration.split("(", 1)[0].split()[-1]
+                if declaration
+                else "",
+            }
+        )
+        if len(symbols) >= limit:
+            break
+    return symbols
+
+
+def _register_rows(
+    names_payload: dict[str, Any],
+    values_payload: dict[str, Any],
+) -> list[dict[str, str]]:
+    names = names_payload.get("results", {}).get("register-names", [])
+    values = values_payload.get("results", {}).get("register-values", [])
+    if not isinstance(names, list) or not isinstance(values, list):
+        return []
+    by_number: dict[int, str] = {}
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        number = _parse_int(item.get("number"))
+        value = item.get("value")
+        if number is not None and isinstance(value, str):
+            by_number[number] = value
+    rows: list[dict[str, str]] = []
+    for number, name in enumerate(names):
+        if not isinstance(name, str) or not name:
+            continue
+        rows.append(
+            {
+                "number": str(number),
+                "name": name,
+                "value": by_number.get(number, ""),
+            }
+        )
+    return rows
+
+
+def _group_registers(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
+    groups = {
+        "instruction": {"pc", "rip", "eip"},
+        "stack": {"sp", "rsp", "esp", "bp", "rbp", "ebp"},
+        "arguments": {"rdi", "rsi", "rdx", "rcx", "r8", "r9", "edi", "esi", "edx", "ecx"},
+        "return": {"rax", "eax", "x0", "a0", "v0"},
+        "general": set(),
+    }
+    output: dict[str, list[dict[str, str]]] = {
+        "instruction": [],
+        "stack": [],
+        "arguments": [],
+        "return": [],
+        "general": [],
+    }
+    assigned: set[str] = set()
+    for group, names in groups.items():
+        if group == "general":
+            continue
+        for row in rows:
+            name = row["name"].lower()
+            if name in names:
+                output[group].append(row)
+                assigned.add(row["name"])
+    for row in rows:
+        if row["name"] not in assigned:
+            output["general"].append(row)
+    return output
+
+
 @mcp.tool(annotations=READ_ONLY)
 async def gdb_checksec(
     session_id: str | None = None,
@@ -2900,6 +3023,234 @@ async def gdb_elf_info(
                 "symbols": symbols,
             }
         return payload
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_register_context(session_id: str) -> dict[str, Any]:
+    """Return pwndbg-style grouped registers for quick pwn context inspection."""
+
+    try:
+        names, values = await asyncio.gather(
+            gdb_register_names(session_id),
+            gdb_registers(session_id),
+        )
+        rows = _register_rows(names, values)
+        return {
+            "ok": bool(names.get("ok") and values.get("ok")),
+            "session_id": session_id,
+            "registers": rows,
+            "groups": _group_registers(rows),
+            "commands": {"names": names, "values": values},
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_symbols(
+    session_id: str,
+    query: str = "",
+    kind: str = "functions",
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Search GDB-known functions or variables and return parsed symbol rows."""
+
+    try:
+        _require_single_line("query", query)
+        if kind not in {"functions", "variables"}:
+            raise ValueError("kind must be one of: functions, variables")
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        command = f"info {kind}"
+        if query:
+            command += f" {query}"
+        session = await manager.get(session_id)
+        payload = _result(session, await session.execute(command, timeout=10.0))
+        symbols = _parse_gdb_symbols(str(payload.get("console") or ""), limit)
+        return {
+            **payload,
+            "query": query,
+            "kind": kind,
+            "symbols": symbols,
+            "symbol_count": len(symbols),
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_got(
+    session_id: str | None = None,
+    file_path: str | None = None,
+    query: str = "",
+    module: str | None = None,
+    limit: int = 200,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """List dynamic relocation/GOT entries, optionally annotated with runtime VAs."""
+
+    try:
+        _require_single_line("query", query)
+        if module is not None:
+            _require_single_line("module", module)
+        if not 1 <= limit <= 2000:
+            raise ValueError("limit must be between 1 and 2000")
+        path, session = await _resolve_elf_file(session_id=session_id, file_path=file_path)
+        if session is None and session_id is not None:
+            session = await manager.get(session_id)
+        relocations_result, checksec = await asyncio.gather(
+            _run_readelf(path, ["-r"], timeout),
+            gdb_checksec(session_id=session.session_id if session else None, file_path=path),
+        )
+        relocations = _parse_readelf_relocations(str(relocations_result.get("stdout") or ""))
+        if query:
+            lowered = query.lower()
+            relocations = [
+                item
+                for item in relocations
+                if lowered in str(item.get("symbol", "")).lower()
+                or lowered in str(item.get("type", "")).lower()
+            ]
+
+        runtime_base: int | None = None
+        piebase: dict[str, Any] | None = None
+        security = checksec.get("security", {})
+        needs_base = isinstance(security, dict) and bool(security.get("pie"))
+        if session is not None and needs_base:
+            piebase = await gdb_piebase(session.session_id, module=module)
+            runtime_base = _parse_int(piebase.get("base"))
+
+        annotated: list[dict[str, Any]] = []
+        for item in relocations[:limit]:
+            offset = _parse_int(item.get("offset"))
+            runtime_address = (
+                runtime_base + offset
+                if runtime_base is not None and offset is not None
+                else offset
+            )
+            annotated.append({**item, "runtime_address": _hex_or_none(runtime_address)})
+
+        return {
+            "ok": bool(relocations_result.get("ok")),
+            "session_id": session.session_id if session else session_id,
+            "file_path": path,
+            "query": query,
+            "module": module,
+            "entries": annotated,
+            "entry_count": len(annotated),
+            "all_entry_count": len(relocations),
+            "piebase": piebase,
+            "checksec": checksec,
+            "readelf": relocations_result,
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_rva_info(
+    session_id: str,
+    offset: int,
+    module: str | None = None,
+    read_string: bool = False,
+) -> dict[str, Any]:
+    """Resolve a module RVA to a runtime address and annotate it like pwndbg xinfo."""
+
+    try:
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        if module is not None:
+            _require_single_line("module", module)
+        base = await gdb_piebase(session_id, offset=offset, module=module)
+        address = base.get("address")
+        address_info = None
+        if isinstance(address, str):
+            address_info = await gdb_address_info(
+                session_id,
+                address,
+                read_string=read_string,
+            )
+        return {
+            "ok": bool(base.get("ok")) and isinstance(address, str),
+            "session_id": session_id,
+            "module": module,
+            "offset": hex(offset),
+            "address": address,
+            "piebase": base,
+            "address_info": address_info,
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def gdb_binary_summary(
+    session_id: str | None = None,
+    file_path: str | None = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Return a pwn-oriented binary summary: ELF metadata, checksec, base, and maps."""
+
+    try:
+        path, session = await _resolve_elf_file(session_id=session_id, file_path=file_path)
+        if session is None and session_id is not None:
+            session = await manager.get(session_id)
+        checksec, elf_info = await asyncio.gather(
+            gdb_checksec(
+                session_id=session.session_id if session else None,
+                file_path=path,
+                timeout=timeout,
+            ),
+            gdb_elf_info(
+                session_id=session.session_id if session else None,
+                file_path=path,
+                timeout=timeout,
+            ),
+        )
+        vmmap: dict[str, Any] | None = None
+        piebase: dict[str, Any] | None = None
+        entry_info: dict[str, Any] | None = None
+        mapping_summary: dict[str, int] = {}
+        if session is not None:
+            vmmap = await gdb_vmmap_structured(session.session_id)
+            piebase = await gdb_piebase(session.session_id)
+            for mapping in vmmap.get("mappings", []) if isinstance(vmmap, dict) else []:
+                if not isinstance(mapping, dict):
+                    continue
+                kind = str(mapping.get("kind") or "unknown")
+                mapping_summary[kind] = mapping_summary.get(kind, 0) + 1
+            entry = _parse_int(checksec.get("security", {}).get("entry"))
+            base = _parse_int(piebase.get("base")) if isinstance(piebase, dict) else None
+            is_pie = bool(checksec.get("security", {}).get("pie"))
+            if entry is not None:
+                runtime_entry = base + entry if is_pie and base is not None else entry
+                entry_info = await gdb_address_info(
+                    session.session_id,
+                    hex(runtime_entry),
+                    read_string=False,
+                )
+        return {
+            "ok": bool(checksec.get("ok") or elf_info.get("ok")),
+            "session_id": session.session_id if session else session_id,
+            "file_path": path,
+            "summary": {
+                "arch": checksec.get("security", {}).get("arch"),
+                "entry": checksec.get("security", {}).get("entry"),
+                "pie": checksec.get("security", {}).get("pie"),
+                "nx": checksec.get("security", {}).get("nx"),
+                "canary": checksec.get("security", {}).get("canary"),
+                "relro": checksec.get("security", {}).get("relro"),
+                "base": piebase.get("base") if isinstance(piebase, dict) else None,
+                "mapping_summary": mapping_summary,
+            },
+            "checksec": checksec,
+            "elf_info": elf_info,
+            "piebase": piebase,
+            "entry_info": entry_info,
+            "vmmap": vmmap,
+        }
     except Exception as exc:
         return _error(exc)
 
@@ -3077,6 +3428,7 @@ async def gdb_command_reference() -> dict[str, Any]:
                 "gdb_locals",
                 "gdb_read_register",
                 "gdb_register_names",
+                "gdb_register_context",
                 "gdb_read_memory",
                 "gdb_pwn_context",
                 "gdb_address_info",
@@ -3092,10 +3444,15 @@ async def gdb_command_reference() -> dict[str, Any]:
             ],
             "binary_analysis": [
                 "gdb_pwn_context",
+                "gdb_binary_summary",
+                "gdb_register_context",
                 "gdb_vmmap_structured",
                 "gdb_address_info",
+                "gdb_rva_info",
                 "gdb_telescope",
                 "gdb_nearpc",
+                "gdb_symbols",
+                "gdb_got",
                 "gdb_piebase",
                 "gdb_break_rva",
                 "gdb_checksec",
@@ -3198,10 +3555,15 @@ async def gdb_capabilities() -> dict[str, Any]:
                 "gdb_pwn_context",
                 "gdb_vmmap_structured",
                 "gdb_address_info",
+                "gdb_rva_info",
                 "gdb_nearpc",
                 "gdb_telescope",
                 "gdb_piebase",
                 "gdb_break_rva",
+                "gdb_register_context",
+                "gdb_symbols",
+                "gdb_got",
+                "gdb_binary_summary",
                 "gdb_checksec",
                 "gdb_elf_info",
             ],

@@ -122,6 +122,11 @@ and module-offset oriented.
 | Tool | Safety | Main Parameters | Purpose |
 | --- | --- | --- | --- |
 | `gdb_pwn_context` | Read | `session_id`, `max_frames`, `telescope_count`, `nearpc_lines` | Return a pwndbg-style context with location, backtrace, registers, `$pc/$sp`, near-PC disassembly, stack telescope, and vmmap. |
+| `gdb_binary_summary` | Read | `session_id`, `file_path` | Return a pwn-oriented binary summary with checksec, ELF metadata, runtime base, entry context, and mapping summary. |
+| `gdb_register_context` | Read | `session_id` | Return grouped registers for quick instruction pointer, stack pointer, argument, return, and general-purpose inspection. |
+| `gdb_symbols` | Read | `session_id`, `query`, `kind`, `limit` | Search GDB-known functions or variables and return parsed symbol rows. |
+| `gdb_got` | Read | `session_id`, `file_path`, `query`, `module` | List dynamic relocation/GOT entries from `readelf -r` and annotate runtime VAs when a session is available. |
+| `gdb_rva_info` | Read | `session_id`, `offset`, `module`, `read_string` | Resolve a module RVA to a runtime address and annotate it with mapping, symbol, and optional string context. |
 | `gdb_break_rva` | Mutation | `session_id`, `offset`, `module`, `temporary`, `hardware` | Set a breakpoint at module PIE base plus an RVA-style offset. |
 
 ## Remote Targets

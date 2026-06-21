@@ -48,7 +48,7 @@ tool is called.
 | Control execution | `gdb_run_and_context`, `gdb_continue_and_context`, `gdb_step_and_context`, `gdb_next_and_context` |
 | Reverse debug | `gdb_start_recording`, `gdb_reverse_continue_and_context`, `gdb_reverse_step_and_context` |
 | Inspect state | `gdb_context`, `gdb_backtrace`, `gdb_locals`, `gdb_eval_expression`, `gdb_read_register`, `gdb_registers`, `gdb_source`, `gdb_disassemble_around_pc`, `gdb_read_memory` |
-| Analyze stripped/optimized binaries | `gdb_pwn_context`, `gdb_vmmap_structured`, `gdb_address_info`, `gdb_telescope`, `gdb_nearpc`, `gdb_piebase`, `gdb_break_rva`, `gdb_checksec`, `gdb_elf_info` |
+| Analyze stripped/optimized binaries | `gdb_pwn_context`, `gdb_binary_summary`, `gdb_register_context`, `gdb_vmmap_structured`, `gdb_address_info`, `gdb_rva_info`, `gdb_telescope`, `gdb_nearpc`, `gdb_symbols`, `gdb_got`, `gdb_piebase`, `gdb_break_rva`, `gdb_checksec`, `gdb_elf_info` |
 | Work with remote targets | `gdb_connect_gdbserver`, `gdb_launch_gdbserver`, `gdb_gdbserver_status` |
 | Inspect server capabilities | `gdb_capabilities`, `gdb_server_health`, `gdb_command_reference`, `gdb_session_diagnostics` |
 
@@ -139,9 +139,10 @@ Typical MCP tool flow:
    `gdb_step_and_context`, or `gdb_next_and_context`.
 5. Inspect further with `gdb_context`, `gdb_eval_expression`,
    `gdb_registers`, or `gdb_read_memory`.
-6. For stripped or optimized binaries, switch to address-level tools such as
-   `gdb_pwn_context`, `gdb_address_info`, `gdb_nearpc`, `gdb_telescope`, and
-   `gdb_vmmap_structured`.
+6. For stripped or optimized binaries, switch to pwn-oriented tools such as
+   `gdb_pwn_context`, `gdb_binary_summary`, `gdb_register_context`,
+   `gdb_address_info`, `gdb_rva_info`, `gdb_symbols`, `gdb_got`,
+   `gdb_nearpc`, `gdb_telescope`, and `gdb_vmmap_structured`.
 7. For time-travel debugging, use `gdb_start_recording` before the run and then
    `gdb_reverse_continue_and_context`, `gdb_reverse_step_and_context`, or
    `gdb_reverse_next_and_context`.
