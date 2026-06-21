@@ -119,6 +119,44 @@ Print portable client configuration:
 gdb-mcp --print-config
 ```
 
+## Update
+
+Use the latest release tag listed in [CHANGELOG.md](CHANGELOG.md), then restart
+the MCP client after updating.
+
+For Codex plugin installs:
+
+```bash
+codex plugin marketplace add BeaCox/gdb-mcp --ref <new-tag>
+codex plugin add gdb-mcp@beacox
+```
+
+For Claude Code plugin installs, refresh the marketplace entry and reinstall the
+plugin:
+
+```bash
+claude plugin marketplace add BeaCox/gdb-mcp
+claude plugin install gdb-mcp@beacox
+```
+
+For direct MCP registrations, replace the tag in the registered `uvx --from`
+source, for example:
+
+```bash
+codex mcp add gdb -- \
+  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@<new-tag> gdb-mcp
+
+claude mcp add --scope user gdb -- \
+  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@<new-tag> gdb-mcp
+```
+
+For installer-managed configs, rerun the installer with the newer tag:
+
+```bash
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@<new-tag> gdb-mcp --install
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@<new-tag> gdb-mcp --install --direct
+```
+
 ## Quick Start
 
 Open a new Codex or Claude Code session after installation and ask for a GDB
