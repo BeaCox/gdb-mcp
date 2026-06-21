@@ -7,7 +7,7 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from gdb_mcp.lazy import LazyBackend, list_proxy_tools
+from gdb_mcp.lazy import LazyBackend, _dispatch_jsonrpc, list_proxy_tools
 
 
 def _tool_payload(result):
@@ -17,6 +17,27 @@ def _tool_payload(result):
         item.text for item in result.content if getattr(item, "text", None) is not None
     )
     return json.loads(text)
+
+
+class _FakeToolResult:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def model_dump(self, **kwargs):
+        return self.payload
+
+
+class _FakeBackend:
+    def __init__(self, result=None, exc=None):
+        self.result = result or {"content": []}
+        self.exc = exc
+        self.calls = []
+
+    async def call_tool(self, name, arguments):
+        self.calls.append((name, arguments))
+        if self.exc is not None:
+            raise self.exc
+        return _FakeToolResult(self.result)
 
 
 class LazyProxyTests(unittest.TestCase):
@@ -32,6 +53,80 @@ class LazyProxyTests(unittest.TestCase):
         backend = LazyBackend(command="/definitely/missing/gdb-mcp-backend")
         self.assertIsNone(backend._session)
         self.assertIsNone(backend._stack)
+
+    def test_dispatch_jsonrpc_forwards_tool_calls(self) -> None:
+        asyncio.run(self._test_dispatch_jsonrpc_forwards_tool_calls())
+
+    async def _test_dispatch_jsonrpc_forwards_tool_calls(self) -> None:
+        backend = _FakeBackend({"structuredContent": {"ok": True}})
+        response = await _dispatch_jsonrpc(
+            backend,
+            b'{"jsonrpc":"2.0","id":7,"method":"tools/call",'
+            b'"params":{"name":"gdb_server_health","arguments":{"verbose":true}}}',
+        )
+
+        self.assertEqual(
+            response,
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "result": {"structuredContent": {"ok": True}},
+            },
+        )
+        self.assertEqual(backend.calls, [("gdb_server_health", {"verbose": True})])
+
+    def test_dispatch_jsonrpc_rejects_bad_tool_arguments(self) -> None:
+        asyncio.run(self._test_dispatch_jsonrpc_rejects_bad_tool_arguments())
+
+    async def _test_dispatch_jsonrpc_rejects_bad_tool_arguments(self) -> None:
+        response = await _dispatch_jsonrpc(
+            _FakeBackend(),
+            b'{"jsonrpc":"2.0","id":"bad","method":"tools/call",'
+            b'"params":{"name":"gdb_server_health","arguments":[]}}',
+        )
+
+        self.assertEqual(response["id"], "bad")
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("arguments must be an object", response["error"]["message"])
+
+    def test_dispatch_jsonrpc_handles_notifications_and_unknown_methods(self) -> None:
+        asyncio.run(self._test_dispatch_jsonrpc_handles_notifications_and_unknown_methods())
+
+    async def _test_dispatch_jsonrpc_handles_notifications_and_unknown_methods(self) -> None:
+        notification = await _dispatch_jsonrpc(
+            _FakeBackend(),
+            b'{"jsonrpc":"2.0","method":"notifications/initialized"}',
+        )
+        unknown = await _dispatch_jsonrpc(
+            _FakeBackend(),
+            b'{"jsonrpc":"2.0","id":3,"method":"unknown/method"}',
+        )
+
+        self.assertIsNone(notification)
+        self.assertEqual(unknown["id"], 3)
+        self.assertEqual(unknown["error"]["code"], -32601)
+
+    def test_dispatch_jsonrpc_reports_backend_start_failure(self) -> None:
+        asyncio.run(self._test_dispatch_jsonrpc_reports_backend_start_failure())
+
+    async def _test_dispatch_jsonrpc_reports_backend_start_failure(self) -> None:
+        response = await _dispatch_jsonrpc(
+            _FakeBackend(exc=RuntimeError("backend failed")),
+            b'{"jsonrpc":"2.0","id":5,"method":"tools/call",'
+            b'"params":{"name":"gdb_server_health"}}',
+        )
+
+        self.assertEqual(response["id"], 5)
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("backend failed", response["error"]["message"])
+
+    def test_dispatch_jsonrpc_ignores_invalid_notification_json(self) -> None:
+        asyncio.run(self._test_dispatch_jsonrpc_ignores_invalid_notification_json())
+
+    async def _test_dispatch_jsonrpc_ignores_invalid_notification_json(self) -> None:
+        response = await _dispatch_jsonrpc(_FakeBackend(), b"not json")
+
+        self.assertIsNone(response)
 
     def test_stdio_list_tools_does_not_start_backend(self) -> None:
         asyncio.run(self._test_stdio_list_tools_does_not_start_backend())

@@ -20,7 +20,7 @@ From Git:
 
 ```bash
 codex mcp add gdb -- \
-  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@main gdb-mcp
+  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.3.0 gdb-mcp
 ```
 
 `gdb-mcp` is the client-facing lazy stdio proxy. The MCP client discovers tools

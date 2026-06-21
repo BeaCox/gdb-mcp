@@ -15,7 +15,8 @@ MARKETPLACE_SOURCE = "BeaCox/gdb-mcp"
 MARKETPLACE_NAME = "beacox"
 PLUGIN_NAME = "gdb-mcp"
 MCP_SERVER_NAME = "gdb"
-PACKAGE_SOURCE = "git+https://github.com/BeaCox/gdb-mcp.git@main"
+RELEASE_TAG = "v0.3.0"
+PACKAGE_SOURCE = f"git+https://github.com/BeaCox/gdb-mcp.git@{RELEASE_TAG}"
 
 
 @dataclass(frozen=True)
@@ -100,7 +101,7 @@ def client_info(
                     "add",
                     MARKETPLACE_SOURCE,
                     "--ref",
-                    "main",
+                    RELEASE_TAG,
                 ],
                 [command, "plugin", "add", f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"],
             ],

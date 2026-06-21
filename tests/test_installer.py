@@ -6,6 +6,7 @@ from unittest.mock import patch
 from gdb_mcp.installer import (
     MARKETPLACE_NAME,
     PACKAGE_SOURCE,
+    RELEASE_TAG,
     client_info,
     configuration,
     parse_targets,
@@ -25,7 +26,7 @@ class InstallerTests(unittest.TestCase):
     def test_codex_plugin_commands(self) -> None:
         with patch("gdb_mcp.installer.shutil.which", return_value="/bin/codex"):
             info = client_info("codex")
-        self.assertEqual(info.plugin_install[0][-2:], ["--ref", "main"])
+        self.assertEqual(info.plugin_install[0][-2:], ["--ref", RELEASE_TAG])
         self.assertEqual(
             info.plugin_install[1],
             ["/bin/codex", "plugin", "add", "gdb-mcp@beacox"],
@@ -34,6 +35,7 @@ class InstallerTests(unittest.TestCase):
     def test_direct_commands_use_portable_uvx_source(self) -> None:
         with patch("gdb_mcp.installer.shutil.which", return_value="/bin/claude"):
             info = client_info("claude")
+        self.assertTrue(PACKAGE_SOURCE.endswith(f"@{RELEASE_TAG}"))
         self.assertEqual(
             info.direct_mcp_install[-4:],
             ["uvx", "--from", PACKAGE_SOURCE, "gdb-mcp"],

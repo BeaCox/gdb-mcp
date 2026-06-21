@@ -90,6 +90,80 @@ class GdbSessionAsyncTests(unittest.TestCase):
         self.assertEqual(payload["results"]["bkpt"]["script"], "break *0x0000000000401136")
         self.assertEqual(payload["results"]["locations"], ["0x0", "not-hex"])
 
+    def test_command_result_truncates_nested_payloads(self) -> None:
+        result = CommandResult(
+            command="-stack-list-variables",
+            records=[
+                MIRecord(
+                    kind="stream",
+                    raw='~"aaaaaaaa"',
+                    stream="console",
+                    text="a" * 1500,
+                ),
+                *[
+                    MIRecord(
+                        kind="notify",
+                        raw=f'=thread-created,id="{index}"',
+                        record_class="thread-created",
+                        results={"id": str(index), "detail": "b" * 80},
+                    )
+                    for index in range(40)
+                ],
+            ],
+            result_record=MIRecord(
+                kind="result",
+                raw='1^done,variables=[{name="value"}]',
+                token=1,
+                record_class="done",
+                results={
+                    "variables": [
+                        {
+                            "name": "large",
+                            "value": "c" * 1500,
+                            "children": [{"name": "child", "value": "d" * 1500}],
+                        }
+                    ]
+                },
+            ),
+        )
+
+        payload = result.to_dict(output_limit_chars=20)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["truncated"])
+        self.assertIn("truncated", payload["console"])
+        self.assertIsInstance(payload["results"], dict)
+        self.assertIsInstance(payload["async"], list)
+        self.assertIsInstance(payload["raw"], list)
+        self.assertLess(len(payload["console"]), 1100)
+        self.assertLess(len(repr(payload["async"])), 1300)
+        self.assertLess(len(repr(payload["raw"])), 1300)
+
+    def test_command_result_marks_missing_result_record_as_not_ok(self) -> None:
+        result = CommandResult(
+            command="-exec-run",
+            records=[
+                MIRecord(
+                    kind="exec",
+                    raw='*stopped,reason="exited-normally"',
+                    record_class="stopped",
+                    results={"reason": "exited-normally"},
+                )
+            ],
+            stopped_record=MIRecord(
+                kind="exec",
+                raw='*stopped,reason="exited-normally"',
+                record_class="stopped",
+                results={"reason": "exited-normally"},
+            ),
+        )
+
+        payload = result.to_dict()
+
+        self.assertFalse(payload["ok"])
+        self.assertIsNone(payload["result_class"])
+        self.assertEqual(payload["stopped"]["reason"], "exited-normally")
+
     def test_startup_timeout_reaps_process(self) -> None:
         asyncio.run(self._test_startup_timeout())
 
