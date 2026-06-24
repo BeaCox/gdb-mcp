@@ -7,7 +7,7 @@ import asyncio
 import os
 import sys
 
-from .lazy import LazyBackend, _split_env_command, run_stdio
+from .lazy import LazyBackend, _backend_subprocess_env, _split_env_command, run_stdio
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -166,6 +166,7 @@ def main() -> None:
     backend = LazyBackend(
         command=command,
         args=command_args,
+        env=_backend_subprocess_env(),
         cwd=args.backend_cwd,
         url=args.backend_url,
         startup_timeout=args.startup_timeout,

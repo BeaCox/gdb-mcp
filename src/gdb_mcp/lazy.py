@@ -54,6 +54,7 @@ class LazyBackend:
 
     command: str | None = None
     args: list[str] | None = None
+    env: dict[str, str] | None = None
     cwd: str | None = None
     url: str | None = None
     startup_timeout: float = 30.0
@@ -83,6 +84,7 @@ class LazyBackend:
         return cls(
             command=command,
             args=args,
+            env=_backend_subprocess_env(),
             cwd=cwd,
             url=url,
             startup_timeout=timeout,
@@ -119,6 +121,7 @@ class LazyBackend:
                     params = StdioServerParameters(
                         command=self.command,
                         args=self.args or [],
+                        env=self.env,
                         cwd=self.cwd,
                     )
                     read, write = await stack.enter_async_context(stdio_client(params))
@@ -248,6 +251,13 @@ def _jsonrpc_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
     }
 
 
+def _backend_subprocess_env() -> dict[str, str] | None:
+    pythonpath = os.getenv("PYTHONPATH")
+    if not pythonpath:
+        return None
+    return {"PYTHONPATH": pythonpath}
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Lazy stdio proxy for gdb-mcp")
     parser.add_argument(
@@ -296,6 +306,7 @@ def main() -> None:
     backend = LazyBackend(
         command=command,
         args=command_args,
+        env=_backend_subprocess_env(),
         cwd=args.backend_cwd,
         url=args.backend_url,
         startup_timeout=args.startup_timeout,

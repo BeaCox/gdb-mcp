@@ -55,6 +55,7 @@ gdb_mcp = ["py.typed"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+pythonpath = ["src"]
 
 [tool.ruff]
 target-version = "py310"

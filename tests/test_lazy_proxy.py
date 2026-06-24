@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -8,6 +9,17 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from gdb_mcp.lazy import LazyBackend, _dispatch_jsonrpc, list_proxy_tools
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+
+
+def _source_tree_env() -> dict[str, str]:
+    pythonpath = str(SRC)
+    existing = os.environ.get("PYTHONPATH")
+    if existing:
+        pythonpath = os.pathsep.join([pythonpath, existing])
+    return {"PYTHONPATH": pythonpath}
 
 
 def _tool_payload(result):
@@ -140,6 +152,8 @@ class LazyProxyTests(unittest.TestCase):
                 "--backend-command",
                 "/definitely/missing/gdb-mcp-backend",
             ],
+            env=_source_tree_env(),
+            cwd=ROOT,
         )
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
@@ -157,6 +171,8 @@ class LazyProxyTests(unittest.TestCase):
         params = StdioServerParameters(
             command=sys.executable,
             args=["-m", "gdb_mcp.lazy"],
+            env=_source_tree_env(),
+            cwd=ROOT,
         )
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
@@ -190,6 +206,8 @@ class LazyProxyTests(unittest.TestCase):
         params = StdioServerParameters(
             command=sys.executable,
             args=["-m", "gdb_mcp.lazy"],
+            env=_source_tree_env(),
+            cwd=ROOT,
         )
         session_ids: list[str] = []
         async with stdio_client(params) as (read, write):
