@@ -164,6 +164,42 @@ class GdbSessionAsyncTests(unittest.TestCase):
         self.assertIsNone(payload["result_class"])
         self.assertEqual(payload["stopped"]["reason"], "exited-normally")
 
+    def test_recent_commands_include_completion_diagnostics(self) -> None:
+        asyncio.run(self._test_recent_command_diagnostics())
+
+    async def _test_recent_command_diagnostics(self) -> None:
+        manager = SessionManager()
+        try:
+            session = await manager.create(gdb_path=str(self.fake_gdb))
+            done = await session.execute("info files", timeout=1.0)
+            self.assertEqual(done.result_record.record_class, "done")
+
+            last = session.recent_commands(1)[0]
+            self.assertEqual(last["command"], "info files")
+            self.assertEqual(last["status"], "done")
+            self.assertEqual(last["result_class"], "done")
+            self.assertFalse(last["timed_out"])
+            self.assertIsNone(last["error"])
+            self.assertGreaterEqual(last["duration_seconds"], 0.0)
+            self.assertGreater(last["record_count"], 0)
+            self.assertIn("finished_at", last)
+
+            timed_out = await session.execute(
+                "-exec-run",
+                timeout=0.05,
+                wait_for_stop=True,
+            )
+            self.assertTrue(timed_out.timed_out)
+
+            last = session.recent_commands(1)[0]
+            self.assertEqual(last["command"], "-exec-run")
+            self.assertEqual(last["status"], "timeout")
+            self.assertEqual(last["result_class"], "running")
+            self.assertTrue(last["timed_out"])
+            self.assertIn("Timed out after", last["error"])
+        finally:
+            await manager.close_all()
+
     def test_startup_timeout_reaps_process(self) -> None:
         asyncio.run(self._test_startup_timeout())
 

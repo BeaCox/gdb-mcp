@@ -239,6 +239,7 @@ class _PendingCommand:
     display_command: str
     wait_for_stop: bool
     future: asyncio.Future[CommandResult]
+    history_entry: dict[str, Any]
     records: list[MIRecord] = field(default_factory=list)
     result_record: MIRecord | None = None
     stopped_record: MIRecord | None = None
@@ -531,24 +532,25 @@ class GdbSession:
         token = self._token
         self._token += 1
         future: asyncio.Future[CommandResult] = asyncio.get_running_loop().create_future()
+        started_at = _wall_time()
         pending = _PendingCommand(
             token=token,
             display_command=display_command,
             wait_for_stop=wait_for_stop,
             future=future,
-        )
-        self._pending[token] = pending
-        self.last_activity_at = _wall_time()
-        self._recent_commands.append(
-            {
+            history_entry={
                 "token": token,
                 "command": display_command,
                 "mi_command": command,
                 "wait_for_stop": wait_for_stop,
-                "started_at": self.last_activity_at,
+                "started_at": started_at,
                 "timeout": timeout,
-            }
+                "status": "running",
+            },
         )
+        self._pending[token] = pending
+        self.last_activity_at = started_at
+        self._recent_commands.append(pending.history_entry)
 
         try:
             async with self._write_lock:
@@ -558,6 +560,12 @@ class GdbSession:
         except asyncio.TimeoutError:
             self._pending.pop(token, None)
             future.cancel()
+            self._finish_command_history(
+                pending,
+                status="timeout",
+                error=f"Timed out after {timeout} seconds",
+                timed_out=True,
+            )
             return CommandResult(
                 display_command,
                 pending.records,
@@ -568,6 +576,7 @@ class GdbSession:
             )
         except (BrokenPipeError, ConnectionResetError) as exc:
             self._pending.pop(token, None)
+            self._finish_command_history(pending, status="error", error=str(exc))
             return CommandResult(display_command, pending.records, error=str(exc))
 
     async def _reader_loop(self) -> None:
@@ -650,13 +659,26 @@ class GdbSession:
     def _finish_pending(self, pending: _PendingCommand) -> None:
         self._pending.pop(pending.token, None)
         if not pending.future.done():
-            pending.future.set_result(pending.result())
+            result = pending.result()
+            self._finish_command_history(
+                pending,
+                status="error"
+                if result.error is not None
+                or (
+                    result.result_record is not None
+                    and result.result_record.record_class == "error"
+                )
+                else "done",
+                error=result.error,
+            )
+            pending.future.set_result(result)
 
     def _fail_pending(self, exc: Exception) -> None:
         pending_commands = list(self._pending.values())
         self._pending.clear()
         for pending in pending_commands:
             if not pending.future.done():
+                self._finish_command_history(pending, status="error", error=str(exc))
                 pending.future.set_result(
                     CommandResult(
                         pending.display_command,
@@ -666,6 +688,35 @@ class GdbSession:
                         error=str(exc),
                     )
                 )
+
+    def _finish_command_history(
+        self,
+        pending: _PendingCommand,
+        *,
+        status: str,
+        error: str | None = None,
+        timed_out: bool = False,
+    ) -> None:
+        if pending.history_entry.get("finished_at") is not None:
+            return
+        finished_at = _wall_time()
+        started_at = float(pending.history_entry["started_at"])
+        pending.history_entry.update(
+            {
+                "status": status,
+                "finished_at": finished_at,
+                "duration_seconds": max(0.0, finished_at - started_at),
+                "result_class": (
+                    pending.result_record.record_class
+                    if pending.result_record is not None
+                    else None
+                ),
+                "stopped": pending.stopped_record is not None,
+                "timed_out": timed_out,
+                "error": error,
+                "record_count": len(pending.records),
+            }
+        )
 
 
 class SessionManager:

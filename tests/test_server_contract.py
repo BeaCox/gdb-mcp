@@ -1,5 +1,6 @@
 import ast
 import asyncio
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -171,6 +172,17 @@ class ServerContractTests(unittest.TestCase):
                 self.assertEqual(tool.inputSchema.get("type"), "object")
                 self.assertEqual(tool.outputSchema.get("type"), "object")
                 self.assertIsNotNone(tool.annotations)
+
+    def test_tools_reference_covers_public_mcp_tools(self) -> None:
+        tools = asyncio.run(self._tool_names())
+        reference = Path(__file__).resolve().parents[1] / "TOOLS.md"
+        documented = set(
+            re.findall(r"`(gdb_[A-Za-z0-9_]+)`", reference.read_text(encoding="utf-8"))
+        )
+        self.assertEqual(sorted(tools - documented), [])
+
+    async def _tool_names(self) -> set[str]:
+        return {tool.name for tool in await mcp.list_tools()}
 
     def test_unsafe_execute_is_disabled_by_default(self) -> None:
         asyncio.run(self._test_unsafe_execute())
