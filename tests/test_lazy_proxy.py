@@ -8,7 +8,12 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from gdb_mcp.lazy import LazyBackend, _dispatch_jsonrpc, list_proxy_tools
+from gdb_mcp.lazy import (
+    LazyBackend,
+    _backend_subprocess_env,
+    _dispatch_jsonrpc,
+    list_proxy_tools,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -53,6 +58,40 @@ class _FakeBackend:
 
 
 class LazyProxyTests(unittest.TestCase):
+    def test_backend_subprocess_env_forwards_backend_configuration(self) -> None:
+        names = (
+            "GDB_MCP_ALLOW_UNSAFE",
+            "GDB_MCP_MAX_SESSIONS",
+            "GDB_MCP_OUTPUT_LIMIT_CHARS",
+            "PYTHONPATH",
+        )
+        previous = {name: os.environ.get(name) for name in names}
+        try:
+            for name in names:
+                os.environ.pop(name, None)
+            self.assertIsNone(_backend_subprocess_env())
+
+            os.environ["GDB_MCP_ALLOW_UNSAFE"] = "1"
+            os.environ["GDB_MCP_MAX_SESSIONS"] = "2"
+            os.environ["GDB_MCP_OUTPUT_LIMIT_CHARS"] = "12345"
+            os.environ["PYTHONPATH"] = "/tmp/src"
+
+            self.assertEqual(
+                _backend_subprocess_env(),
+                {
+                    "GDB_MCP_ALLOW_UNSAFE": "1",
+                    "GDB_MCP_MAX_SESSIONS": "2",
+                    "GDB_MCP_OUTPUT_LIMIT_CHARS": "12345",
+                    "PYTHONPATH": "/tmp/src",
+                },
+            )
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
     def test_static_tool_list_matches_full_server_without_backend(self) -> None:
         asyncio.run(self._test_static_tool_list())
 
@@ -182,6 +221,33 @@ class LazyProxyTests(unittest.TestCase):
         payload = _tool_payload(result)
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["name"], "gdb-mcp")
+
+    def test_stdio_backend_inherits_environment_configuration(self) -> None:
+        asyncio.run(self._test_stdio_backend_inherits_environment_configuration())
+
+    async def _test_stdio_backend_inherits_environment_configuration(self) -> None:
+        env = {
+            **_source_tree_env(),
+            "GDB_MCP_ALLOW_UNSAFE": "1",
+            "GDB_MCP_MAX_SESSIONS": "2",
+            "GDB_MCP_OUTPUT_LIMIT_CHARS": "12345",
+        }
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "gdb_mcp.lazy"],
+            env=env,
+            cwd=ROOT,
+        )
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool("gdb_server_health", {})
+
+        payload = _tool_payload(result)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["unsafe_execute_enabled"])
+        self.assertEqual(payload["max_sessions"], 2)
+        self.assertEqual(payload["output_limit_chars"], 12345)
 
     def test_user_facing_gdb_mcp_command_is_lazy_proxy(self) -> None:
         asyncio.run(self._test_user_facing_gdb_mcp_command_is_lazy_proxy())

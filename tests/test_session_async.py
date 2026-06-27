@@ -197,6 +197,15 @@ class GdbSessionAsyncTests(unittest.TestCase):
             self.assertEqual(last["result_class"], "running")
             self.assertTrue(last["timed_out"])
             self.assertIn("Timed out after", last["error"])
+
+            failed = await session.execute("-bad-command", timeout=1.0)
+            self.assertEqual(failed.result_record.record_class, "error")
+
+            last = session.recent_commands(1)[0]
+            self.assertEqual(last["command"], "-bad-command")
+            self.assertEqual(last["status"], "error")
+            self.assertEqual(last["result_class"], "error")
+            self.assertEqual(last["error"], "Undefined MI command")
         finally:
             await manager.close_all()
 

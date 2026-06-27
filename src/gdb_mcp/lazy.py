@@ -252,10 +252,17 @@ def _jsonrpc_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
 
 
 def _backend_subprocess_env() -> dict[str, str] | None:
-    pythonpath = os.getenv("PYTHONPATH")
-    if not pythonpath:
-        return None
-    return {"PYTHONPATH": pythonpath}
+    env = {
+        name: value
+        for name in (
+            "GDB_MCP_ALLOW_UNSAFE",
+            "GDB_MCP_MAX_SESSIONS",
+            "GDB_MCP_OUTPUT_LIMIT_CHARS",
+            "PYTHONPATH",
+        )
+        if (value := os.getenv(name)) is not None
+    }
+    return env or None
 
 
 def _build_parser() -> argparse.ArgumentParser:

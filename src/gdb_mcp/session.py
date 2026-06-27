@@ -144,6 +144,18 @@ def _compact_hex_values(value: Any) -> Any:
     return value
 
 
+def _record_error_message(record: MIRecord | None) -> str | None:
+    if record is None or record.record_class != "error":
+        return None
+    results = record.results or {}
+    message = results.get("msg")
+    if isinstance(message, str) and message:
+        return message
+    if results:
+        return repr(results)
+    return "GDB command failed"
+
+
 @dataclass
 class CommandResult:
     command: str
@@ -669,7 +681,7 @@ class GdbSession:
                     and result.result_record.record_class == "error"
                 )
                 else "done",
-                error=result.error,
+                error=result.error or _record_error_message(result.result_record),
             )
             pending.future.set_result(result)
 

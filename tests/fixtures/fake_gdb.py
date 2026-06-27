@@ -44,6 +44,10 @@ def main() -> None:
             )
             emit("(gdb)")
             continue
+        if command == "-bad-command":
+            emit(f'{token}^error,msg="Undefined MI command"')
+            emit("(gdb)")
+            continue
         if command.startswith("-data-evaluate-expression "):
             if '"$pc"' in command:
                 emit(f'{token}^done,value="0x401004"')
