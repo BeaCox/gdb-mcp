@@ -41,6 +41,36 @@ class GdbSessionAsyncTests(unittest.TestCase):
         finally:
             await manager.close_all()
 
+    def test_close_fails_running_and_queued_commands(self) -> None:
+        asyncio.run(self._test_close_fails_running_and_queued_commands())
+
+    async def _test_close_fails_running_and_queued_commands(self) -> None:
+        manager = SessionManager()
+        try:
+            session = await manager.create(gdb_path=str(self.fake_gdb))
+            running = asyncio.create_task(
+                session.execute(
+                    "-exec-run",
+                    timeout=5.0,
+                    wait_for_stop=True,
+                )
+            )
+            await asyncio.sleep(0.05)
+            queued = asyncio.create_task(session.execute("info files", timeout=5.0))
+            await asyncio.sleep(0.05)
+
+            await session.close()
+            running_result, queued_result = await asyncio.gather(running, queued)
+
+            self.assertEqual(session.state, "closed")
+            self.assertIn("closing", running_result.error)
+            self.assertIn("GDB session is", queued_result.error)
+            self.assertFalse(session.is_alive())
+            with self.assertRaises(GdbMcpError):
+                await session.ensure_started()
+        finally:
+            await manager.close_all()
+
     def test_arguments_use_mi_c_strings(self) -> None:
         asyncio.run(self._test_arguments())
 

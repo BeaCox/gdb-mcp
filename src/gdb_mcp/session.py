@@ -286,6 +286,8 @@ class GdbSession:
     _token: int = 1
     _command_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    _close_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    _closing: bool = False
     _reader_task: asyncio.Task[None] | None = None
     _startup_prompt: asyncio.Event = field(default_factory=asyncio.Event)
     _reader_error: Exception | None = None
@@ -298,6 +300,8 @@ class GdbSession:
     )
 
     async def start(self, startup_timeout: float = 10.0) -> dict[str, Any]:
+        if self.state in {"closing", "closed"} or self._closing:
+            raise GdbMcpError(f"GDB session is {self.state}")
         if self.process is not None and self.process.returncode is None:
             return self.describe()
         resolved_gdb = shutil.which(self.gdb_path)
@@ -427,53 +431,63 @@ class GdbSession:
         )
 
     async def close(self) -> None:
-        self.state = "closing"
-        process = self.process
-        if process is not None and process.returncode is None:
-            try:
-                await self._send_command(
-                    "-gdb-exit",
-                    display_command="-gdb-exit",
-                    timeout=1.0,
-                    wait_for_stop=False,
-                )
-            except Exception:
-                pass
-            if process.returncode is None:
-                process.terminate()
+        async with self._close_lock:
+            if self.state == "closed":
+                return
+            self._closing = True
+            self.state = "closing"
+            had_pending = bool(self._pending)
+            self._fail_pending(GdbMcpError("GDB session is closing"))
+
+            process = self.process
+            if process is not None and process.returncode is None:
+                if not had_pending:
+                    try:
+                        await self._send_command(
+                            "-gdb-exit",
+                            display_command="-gdb-exit",
+                            timeout=1.0,
+                            wait_for_stop=False,
+                            allow_closing=True,
+                        )
+                    except Exception:
+                        pass
+                if process.returncode is None:
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=2.0)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        await process.wait()
+
+            if self._reader_task is not None:
+                if not self._reader_task.done():
+                    self._reader_task.cancel()
                 try:
-                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                    await self._reader_task
+                except asyncio.CancelledError:
+                    pass
+                self._reader_task = None
+
+            if self.gdbserver_drain_task is not None:
+                self.gdbserver_drain_task.cancel()
+            if self.gdbserver_process is not None and self.gdbserver_process.returncode is None:
+                self.gdbserver_process.terminate()
+                try:
+                    await asyncio.wait_for(self.gdbserver_process.wait(), timeout=2.0)
                 except asyncio.TimeoutError:
-                    process.kill()
-                    await process.wait()
+                    self.gdbserver_process.kill()
+                    await self.gdbserver_process.wait()
+            if self.gdbserver_drain_task is not None:
+                try:
+                    await self.gdbserver_drain_task
+                except asyncio.CancelledError:
+                    pass
+                self.gdbserver_drain_task = None
 
-        if self._reader_task is not None:
-            if not self._reader_task.done():
-                self._reader_task.cancel()
-            try:
-                await self._reader_task
-            except asyncio.CancelledError:
-                pass
-            self._reader_task = None
-
-        if self.gdbserver_drain_task is not None:
-            self.gdbserver_drain_task.cancel()
-        if self.gdbserver_process is not None and self.gdbserver_process.returncode is None:
-            self.gdbserver_process.terminate()
-            try:
-                await asyncio.wait_for(self.gdbserver_process.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
-                self.gdbserver_process.kill()
-                await self.gdbserver_process.wait()
-        if self.gdbserver_drain_task is not None:
-            try:
-                await self.gdbserver_drain_task
-            except asyncio.CancelledError:
-                pass
-            self.gdbserver_drain_task = None
-
-        self._fail_pending(GdbMcpError("GDB session closed"))
-        self.state = "closed"
+            self._fail_pending(GdbMcpError("GDB session closed"))
+            self.state = "closed"
+            self._closing = False
 
     def is_alive(self) -> bool:
         return self.process is not None and self.process.returncode is None
@@ -504,6 +518,10 @@ class GdbSession:
         return commands[-max(0, limit) :]
 
     async def ensure_started(self) -> None:
+        if self.state == "closed":
+            raise GdbMcpError("GDB session is closed")
+        if self.state == "closing" or self._closing:
+            raise GdbMcpError("GDB session is closing")
         if self.process is None:
             await self.start()
         elif self.process.returncode is not None:
@@ -525,7 +543,14 @@ class GdbSession:
         display_command: str,
         timeout: float,
         wait_for_stop: bool,
+        allow_closing: bool = False,
     ) -> CommandResult:
+        if not allow_closing and (self._closing or self.state in {"closing", "closed"}):
+            return CommandResult(
+                command=display_command,
+                records=[],
+                error=f"GDB session is {self.state}",
+            )
         process = self.process
         if process is None or process.returncode is not None:
             code = process.returncode if process is not None else None
