@@ -418,8 +418,24 @@ def _require_unsafe_tool(name: str) -> None:
 
 
 def _require_breakpoint_number(number: str) -> None:
-    if not number or any(char not in "0123456789." for char in number):
-        raise ValueError("Breakpoint number must contain only digits and dots")
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", number) is None:
+        raise ValueError("Breakpoint number must be digits with optional dotted subparts")
+
+
+def _require_positive_decimal_id(name: str, value: str) -> None:
+    if not value.isdigit() or int(value) <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+
+
+def _register_number_suffix(register_numbers: list[int] | None) -> str:
+    if not register_numbers:
+        return ""
+    if len(register_numbers) > 512:
+        raise ValueError("register_numbers must contain at most 512 items")
+    for item in register_numbers:
+        if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+            raise ValueError("Register numbers must be non-negative integers")
+    return " " + " ".join(str(item) for item in register_numbers)
 
 
 def _require_hex_bytes(name: str, value: str) -> str:
@@ -1047,9 +1063,9 @@ async def gdb_set_breakpoint(
     """Set a breakpoint using GDB CLI syntax."""
 
     try:
-        _require_single_line("location", location)
+        _require_cli_target("location", location)
         if condition is not None:
-            _require_single_line("condition", condition)
+            _require_read_expression("condition", condition)
         if hardware and temporary:
             prefix = "thbreak"
         elif hardware:
@@ -1212,8 +1228,7 @@ async def gdb_select_thread(session_id: str, thread_id: str) -> dict[str, Any]:
     """Select the current thread."""
 
     try:
-        if not thread_id.isdigit():
-            raise ValueError("Thread ID must be a positive integer")
+        _require_positive_decimal_id("thread_id", thread_id)
         session = await manager.get(session_id)
         return _result(
             session,
@@ -1836,11 +1851,7 @@ async def gdb_registers(
     try:
         if fmt not in {"x", "o", "t", "d", "r", "N"}:
             raise ValueError("fmt must be one of: x, o, t, d, r, N")
-        if register_numbers and any(item < 0 for item in register_numbers):
-            raise ValueError("Register numbers must be non-negative")
-        suffix = ""
-        if register_numbers:
-            suffix = " " + " ".join(str(item) for item in register_numbers)
+        suffix = _register_number_suffix(register_numbers)
         session = await manager.get(session_id)
         return _result(
             session,
@@ -1861,11 +1872,7 @@ async def gdb_register_names(
     """List register names, optionally limited to GDB register numbers."""
 
     try:
-        if register_numbers and any(item < 0 for item in register_numbers):
-            raise ValueError("Register numbers must be non-negative")
-        suffix = ""
-        if register_numbers:
-            suffix = " " + " ".join(str(item) for item in register_numbers)
+        suffix = _register_number_suffix(register_numbers)
         session = await manager.get(session_id)
         return _result(
             session,
@@ -1913,6 +1920,7 @@ async def gdb_read_memory(
     """Read raw memory bytes."""
 
     try:
+        _require_read_expression("address", address)
         if not 1 <= count <= 1_048_576:
             raise ValueError("count must be between 1 and 1048576 bytes")
         session = await manager.get(session_id)
@@ -1937,7 +1945,7 @@ async def gdb_write_memory(
 
     try:
         _require_unsafe_tool("gdb_write_memory")
-        _require_single_line("address", address)
+        _require_cli_target("address", address)
         data = _require_hex_bytes("data_hex", data_hex)
         session = await manager.get(session_id)
         return _result(
@@ -1961,8 +1969,8 @@ async def gdb_search_memory(
     """Search memory for a GDB find pattern."""
 
     try:
-        _require_cli_target("start_address", start_address)
-        _require_single_line("pattern", pattern)
+        _require_read_expression("start_address", start_address)
+        _require_read_expression("pattern", pattern)
         if not 1 <= length <= 1_048_576:
             raise ValueError("length must be between 1 and 1048576 bytes")
         if not pattern.strip():
@@ -1988,6 +1996,7 @@ async def gdb_read_c_string(
     """Read a NUL-terminated C string from memory."""
 
     try:
+        _require_read_expression("address", address)
         if not 1 <= max_bytes <= 1_048_576:
             raise ValueError("max_bytes must be between 1 and 1048576")
         session = await manager.get(session_id)
@@ -2546,7 +2555,7 @@ async def _resolve_elf_file(
     file_path: str | None,
 ) -> tuple[str, GdbSession | None]:
     if file_path is not None:
-        _require_single_line("file_path", file_path)
+        _require_cli_target("file_path", file_path)
         return file_path, None
     if session_id is None:
         raise ValueError("Provide session_id or file_path")

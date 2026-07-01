@@ -46,11 +46,13 @@ from gdb_mcp.server import (
     gdb_print,
     gdb_pwn_context,
     gdb_read_c_string,
+    gdb_read_memory,
     gdb_read_register,
     gdb_recent_commands,
     gdb_record_status,
     gdb_register_context,
     gdb_register_names,
+    gdb_registers,
     gdb_reverse_continue,
     gdb_reverse_continue_and_context,
     gdb_reverse_finish,
@@ -61,6 +63,7 @@ from gdb_mcp.server import (
     gdb_reverse_step_and_context,
     gdb_rva_info,
     gdb_search_memory,
+    gdb_select_thread,
     gdb_session_diagnostics,
     gdb_set_breakpoint,
     gdb_set_remote_paths,
@@ -216,12 +219,23 @@ class ServerContractTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("line breaks", result["error"])
 
+    def test_breakpoint_tools_reject_malformed_numbers(self) -> None:
+        for number in ("", ".", "1.", ".1", "1..2", "a1"):
+            with self.subTest(number=number):
+                result = asyncio.run(gdb_enable_breakpoint("missing", number))
+                self.assertFalse(result["ok"])
+                self.assertIn("Breakpoint number", result["error"])
+
     def test_safe_expression_tools_reject_calls_and_mutations(self) -> None:
         results = [
             asyncio.run(gdb_eval_expression("missing", "puts(1)")),
             asyncio.run(gdb_eval_expression("missing", "value = 1")),
             asyncio.run(gdb_set_watchpoint("missing", "counter++")),
             asyncio.run(gdb_print("missing", "puts(1)")),
+            asyncio.run(gdb_set_breakpoint("missing", "main", condition="puts(1)")),
+            asyncio.run(gdb_read_memory("missing", "puts(1)", 1)),
+            asyncio.run(gdb_read_c_string("missing", "puts(1)")),
+            asyncio.run(gdb_search_memory("missing", "0x1000", 1, "puts(1)")),
         ]
         for result in results:
             with self.subTest(result=result):
@@ -230,11 +244,39 @@ class ServerContractTests(unittest.TestCase):
         self.assertIn("modify", results[1]["error"])
         self.assertIn("modify", results[2]["error"])
         self.assertIn("call functions", results[3]["error"])
+        self.assertIn("call functions", results[4]["error"])
+        self.assertIn("call functions", results[5]["error"])
+        self.assertIn("call functions", results[6]["error"])
+        self.assertIn("call functions", results[7]["error"])
 
     def test_core_path_rejects_multiline_input(self) -> None:
         result = asyncio.run(gdb_load_core("/tmp/core\nbad", session_id="missing"))
         self.assertFalse(result["ok"])
         self.assertIn("line breaks", result["error"])
+
+    def test_thread_id_must_be_positive(self) -> None:
+        result = asyncio.run(gdb_select_thread("missing", "0"))
+        self.assertFalse(result["ok"])
+        self.assertIn("positive integer", result["error"])
+
+    def test_register_number_lists_are_bounded(self) -> None:
+        negative = asyncio.run(gdb_registers("missing", register_numbers=[-1]))
+        too_many = asyncio.run(gdb_register_names("missing", register_numbers=[0] * 513))
+        non_integer = asyncio.run(gdb_registers("missing", register_numbers=[True]))
+
+        self.assertFalse(negative["ok"])
+        self.assertIn("non-negative integers", negative["error"])
+        self.assertFalse(too_many["ok"])
+        self.assertIn("at most 512", too_many["error"])
+        self.assertFalse(non_integer["ok"])
+        self.assertIn("non-negative integers", non_integer["error"])
+
+    def test_elf_file_path_rejects_empty_and_nul(self) -> None:
+        for file_path in ("", "abc\0def"):
+            with self.subTest(file_path=repr(file_path)):
+                result = asyncio.run(gdb_checksec(file_path=file_path))
+                self.assertFalse(result["ok"])
+                self.assertRegex(result["error"], "empty|unsupported")
 
     def test_unsafe_dedicated_tools_are_disabled_by_default(self) -> None:
         previous = runtime_config.allow_unsafe_execute
