@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
+
+from . import __version__
 
 ClientName = Literal["claude", "codex"]
 
@@ -15,7 +19,25 @@ MARKETPLACE_SOURCE = "BeaCox/gdb-mcp"
 MARKETPLACE_NAME = "beacox"
 PLUGIN_NAME = "gdb-mcp"
 MCP_SERVER_NAME = "gdb"
-RELEASE_TAG = "v0.3.1"
+
+
+def _checkout_version() -> str | None:
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    if not pyproject.exists():
+        return None
+    match = re.search(
+        r'(?m)^version\s*=\s*"(?P<version>[^"]+)"\s*$',
+        pyproject.read_text(encoding="utf-8"),
+    )
+    return match.group("version") if match is not None else None
+
+
+def _release_tag() -> str:
+    version = __version__ if __version__ != "0+unknown" else _checkout_version()
+    return f"v{version or __version__}"
+
+
+RELEASE_TAG = _release_tag()
 PACKAGE_SOURCE = f"git+https://github.com/BeaCox/gdb-mcp.git@{RELEASE_TAG}"
 
 

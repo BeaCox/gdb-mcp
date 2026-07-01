@@ -1,4 +1,5 @@
 import json
+import re
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -11,6 +12,18 @@ from gdb_mcp.installer import (
     configuration,
     parse_targets,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def project_version() -> str:
+    match = re.search(
+        r'(?m)^version\s*=\s*"(?P<version>[^"]+)"\s*$',
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+    )
+    if match is None:
+        raise AssertionError("pyproject.toml is missing project.version")
+    return match.group("version")
 
 
 class InstallerTests(unittest.TestCase):
@@ -41,6 +54,22 @@ class InstallerTests(unittest.TestCase):
             ["uvx", "--from", PACKAGE_SOURCE, "gdb-mcp"],
         )
 
+    def test_release_version_references_match_project_version(self) -> None:
+        version = project_version()
+        tag = f"v{version}"
+        self.assertEqual(RELEASE_TAG, tag)
+        self.assertTrue(PACKAGE_SOURCE.endswith(f"@{tag}"))
+
+        for relative in ("README.md", "examples/README.md"):
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            tags = set(re.findall(r"(?:@|--ref\s+)(v[0-9]+\.[0-9]+\.[0-9]+)", text))
+            self.assertEqual(tags, {tag}, relative)
+
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        latest = re.search(r"(?m)^## \[(?P<version>[0-9]+\.[0-9]+\.[0-9]+)\]", changelog)
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest.group("version"), version)
+
     def test_parse_explicit_targets(self) -> None:
         self.assertEqual(parse_targets("claude,codex,claude"), ["claude", "codex"])
         with self.assertRaises(ValueError):
@@ -59,12 +88,11 @@ class InstallerTests(unittest.TestCase):
         )
 
     def test_marketplace_manifests_point_to_plugin(self) -> None:
-        root = Path(__file__).resolve().parents[1]
         claude = json.loads(
-            (root / ".claude-plugin" / "marketplace.json").read_text()
+            (ROOT / ".claude-plugin" / "marketplace.json").read_text()
         )
         codex = json.loads(
-            (root / ".agents" / "plugins" / "marketplace.json").read_text()
+            (ROOT / ".agents" / "plugins" / "marketplace.json").read_text()
         )
         self.assertEqual(claude["name"], "beacox")
         self.assertEqual(claude["plugins"][0]["source"], ".")
