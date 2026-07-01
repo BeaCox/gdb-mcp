@@ -104,6 +104,46 @@ def _result(session: GdbSession, result: CommandResult) -> dict[str, Any]:
     return result.to_dict(session.output_limit_chars)
 
 
+def _mi_eval_expression_command(expression: str) -> str:
+    return f"-data-evaluate-expression {c_escape(expression)}"
+
+
+def _mi_read_memory_bytes_command(address: str, count: int) -> str:
+    return f"-data-read-memory-bytes {c_escape(address)} {count}"
+
+
+def _mi_write_memory_bytes_command(address: str, data_hex: str) -> str:
+    return f"-data-write-memory-bytes {c_escape(address)} {data_hex}"
+
+
+def _gdb_set_string_command(name: str, value: str) -> str:
+    return f"-gdb-set {name} {c_escape(value)}"
+
+
+def _cli_print_command(expression: str) -> str:
+    return f"print {expression}"
+
+
+def _cli_set_var_command(expression: str, value: str) -> str:
+    return f"set var {expression} = {value}"
+
+
+def _cli_disassemble_command(options: str, target: str) -> str:
+    return f"disassemble {options} {target}".replace("  ", " ")
+
+
+def _cli_find_command(start_address: str, length: int, pattern: str) -> str:
+    return f"find {start_address}, +{length}, {pattern}"
+
+
+def _cli_info_symbol_command(address: int) -> str:
+    return f"info symbol {hex(address)}"
+
+
+def _cli_x_instructions_command(lines: int, start_expression: str) -> str:
+    return f"x/{lines}i {start_expression}"
+
+
 async def _executable_version(path: str | None, *args: str) -> str | None:
     if path is None:
         return None
@@ -1302,7 +1342,7 @@ async def gdb_eval_expression(
         return _result(
             session,
             await session.execute(
-                f"-data-evaluate-expression {c_escape(expression)}",
+                _mi_eval_expression_command(expression),
                 timeout=timeout,
             ),
         )
@@ -1323,7 +1363,7 @@ async def gdb_print(
         session = await manager.get(session_id)
         return _result(
             session,
-            await session.execute(f"print {expression}", timeout=timeout),
+            await session.execute(_cli_print_command(expression), timeout=timeout),
         )
     except Exception as exc:
         return _error(exc)
@@ -1345,7 +1385,7 @@ async def gdb_call_function(
         session = await manager.get(session_id)
         return _result(
             session,
-            await session.execute(f"print {expression}", timeout=timeout),
+            await session.execute(_cli_print_command(expression), timeout=timeout),
         )
     except Exception as exc:
         return _error(exc)
@@ -1369,7 +1409,7 @@ async def gdb_set_variable(
         session = await manager.get(session_id)
         return _result(
             session,
-            await session.execute(f"set var {expression} = {value}", timeout=timeout),
+            await session.execute(_cli_set_var_command(expression, value), timeout=timeout),
         )
     except Exception as exc:
         return _error(exc)
@@ -1406,7 +1446,7 @@ async def gdb_disassemble(
         return _result(
             session,
             await session.execute(
-                f"disassemble {options} {target}".replace("  ", " "),
+                _cli_disassemble_command(options, target),
                 timeout=10.0,
             ),
         )
@@ -1708,9 +1748,10 @@ async def gdb_disassemble_around_pc(
         options = ""
         if mixed or raw_bytes:
             options = "/" + ("m" if mixed else "") + ("r" if raw_bytes else "")
-        command = (
-            f"disassemble {options} $pc-{bytes_before},$pc+{bytes_after}"
-        ).replace("  ", " ")
+        command = _cli_disassemble_command(
+            options,
+            f"$pc-{bytes_before},$pc+{bytes_after}",
+        )
         session = await manager.get(session_id)
         return _result(session, await session.execute(command, timeout=10.0))
     except Exception as exc:
@@ -1896,7 +1937,7 @@ async def gdb_read_register(
         payload = _result(
             session,
             await session.execute(
-                f"-data-evaluate-expression {c_escape(expression)}",
+                _mi_eval_expression_command(expression),
                 timeout=timeout,
             ),
         )
@@ -1927,7 +1968,7 @@ async def gdb_read_memory(
         return _result(
             session,
             await session.execute(
-                f"-data-read-memory-bytes {c_escape(address)} {count}",
+                _mi_read_memory_bytes_command(address, count),
                 timeout=10.0,
             ),
         )
@@ -1951,7 +1992,7 @@ async def gdb_write_memory(
         return _result(
             session,
             await session.execute(
-                f"-data-write-memory-bytes {c_escape(address)} {data}",
+                _mi_write_memory_bytes_command(address, data),
                 timeout=10.0,
             ),
         )
@@ -1979,7 +2020,7 @@ async def gdb_search_memory(
         return _result(
             session,
             await session.execute(
-                f"find {start_address}, +{length}, {pattern}",
+                _cli_find_command(start_address, length, pattern),
                 timeout=10.0,
             ),
         )
@@ -2001,7 +2042,7 @@ async def gdb_read_c_string(
             raise ValueError("max_bytes must be between 1 and 1048576")
         session = await manager.get(session_id)
         result = await session.execute(
-            f"-data-read-memory-bytes {c_escape(address)} {max_bytes}",
+            _mi_read_memory_bytes_command(address, max_bytes),
             timeout=10.0,
         )
         payload = _result(session, result)
@@ -2064,7 +2105,7 @@ async def _evaluate_address(
     payload = _result(
         session,
         await session.execute(
-            f"-data-evaluate-expression {c_escape(expression)}",
+            _mi_eval_expression_command(expression),
             timeout=timeout,
         ),
     )
@@ -2191,7 +2232,7 @@ async def gdb_address_info(
         if address is not None:
             symbol_result = _result(
                 session,
-                await session.execute(f"info symbol {hex(address)}", timeout=5.0),
+                await session.execute(_cli_info_symbol_command(address), timeout=5.0),
             )
             symbol = {
                 "ok": symbol_result.get("ok"),
@@ -2255,7 +2296,7 @@ async def gdb_telescope(
         memory = _result(
             session,
             await session.execute(
-                f"-data-read-memory-bytes {c_escape(hex(start))} {count * pointer_size}",
+                _mi_read_memory_bytes_command(hex(start), count * pointer_size),
                 timeout=10.0,
             ),
         )
@@ -2285,7 +2326,7 @@ async def gdb_telescope(
                 deref = _result(
                     session,
                     await session.execute(
-                        f"-data-read-memory-bytes {c_escape(hex(current))} {pointer_size}",
+                        _mi_read_memory_bytes_command(hex(current), pointer_size),
                         timeout=5.0,
                     ),
                 )
@@ -2341,7 +2382,7 @@ async def gdb_nearpc(
         start_expression = pc
         if address is not None and reverse:
             start_expression = hex(max(0, address - reverse * instruction_bytes))
-        command = f"x/{lines}i {start_expression}"
+        command = _cli_x_instructions_command(lines, start_expression)
         disassembly = _result(session, await session.execute(command, timeout=10.0))
         instructions = _parse_disassembly(str(disassembly.get("console") or ""), address)
         vmmap_payload, mappings = await _structured_mappings(session)
@@ -2912,7 +2953,7 @@ async def gdb_set_remote_paths(
                 continue
             _require_single_line(name, value)
             result = await session.execute(
-                f"-gdb-set {name} {c_escape(value)}",
+                _gdb_set_string_command(name, value),
                 timeout=10.0,
             )
             payload = _result(session, result)
