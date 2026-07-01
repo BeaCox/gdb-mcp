@@ -23,6 +23,7 @@ from .session import (
     GdbMcpError,
     GdbSession,
     SessionManager,
+    _truncate_text,
     gdbserver_target_endpoint,
     launch_gdbserver,
 )
@@ -2518,11 +2519,24 @@ async def _run_readelf(file_path: str, args: list[str], timeout: float) -> dict[
         process.kill()
         await process.wait()
         return {"ok": False, "error": f"readelf timed out after {timeout} seconds"}
+    output_limit = max(1_000, runtime_config.output_limit_chars // 8)
+    decoded_stdout, stdout_truncated = _truncate_text(
+        stdout.decode(errors="replace"),
+        output_limit,
+    )
+    decoded_stderr, stderr_truncated = _truncate_text(
+        stderr.decode(errors="replace"),
+        output_limit,
+    )
     return {
         "ok": process.returncode == 0,
         "returncode": process.returncode,
-        "stdout": stdout.decode(errors="replace"),
-        "stderr": stderr.decode(errors="replace"),
+        "stdout": decoded_stdout,
+        "stderr": decoded_stderr,
+        "stdout_truncated": stdout_truncated,
+        "stderr_truncated": stderr_truncated,
+        "truncated": stdout_truncated or stderr_truncated,
+        "output_limit_chars": output_limit,
     }
 
 

@@ -4,8 +4,10 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from gdb_mcp.server import (
+    _run_readelf,
     gdb_address_info,
     gdb_attach,
     gdb_binary_summary,
@@ -484,6 +486,36 @@ class ServerContractTests(unittest.TestCase):
         self.assertIn("Provide session_id or file_path", elf_info["error"])
         self.assertIn("Provide session_id or file_path", got["error"])
         self.assertIn("Provide session_id or file_path", binary_summary["error"])
+
+    def test_readelf_output_is_bounded(self) -> None:
+        asyncio.run(self._test_readelf_output_is_bounded())
+
+    async def _test_readelf_output_is_bounded(self) -> None:
+        previous = runtime_config.output_limit_chars
+        runtime_config.output_limit_chars = 4_000
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_readelf = Path(tmp) / "readelf"
+            fake_readelf.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "sys.stdout.write('A' * 5000)\n"
+                "sys.stderr.write('B' * 2000)\n",
+                encoding="utf-8",
+            )
+            fake_readelf.chmod(0o755)
+            try:
+                with patch("gdb_mcp.server.shutil.which", return_value=str(fake_readelf)):
+                    result = await _run_readelf("/tmp/sample", ["-h"], timeout=1.0)
+            finally:
+                runtime_config.output_limit_chars = previous
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["truncated"])
+        self.assertTrue(result["stdout_truncated"])
+        self.assertTrue(result["stderr_truncated"])
+        self.assertLessEqual(len(result["stdout"]), result["output_limit_chars"])
+        self.assertLessEqual(len(result["stderr"]), result["output_limit_chars"])
+        self.assertIn("truncated", result["stdout"])
 
     def test_context_rejects_invalid_frame_count(self) -> None:
         result = asyncio.run(gdb_context("missing", max_frames=0))
