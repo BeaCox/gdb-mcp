@@ -11,6 +11,7 @@ from mcp.types import ToolAnnotations
 
 from ..analysis import read_memory_contents as _read_memory_contents
 from ..analysis import source_context as _source_context
+from ..pagination import paginate_range, paginate_text_lines
 from .execution import (
     gdb_continue,
     gdb_next,
@@ -720,6 +721,8 @@ async def gdb_thread_apply_all_backtrace(
     session_id: str,
     max_frames: int = 50,
     output: str = "structured",
+    cursor: str | None = None,
+    page_size: int | None = None,
 ) -> dict[str, Any]:
     """Run backtrace on every thread."""
 
@@ -735,6 +738,21 @@ async def gdb_thread_apply_all_backtrace(
                 timeout=15.0,
             ),
         )
+        lines, pagination = paginate_text_lines(
+            str(payload.get("console") or ""),
+            cursor=cursor,
+            page_size=page_size,
+            default_page_size=200,
+            max_page_size=2_000,
+        )
+        payload = {
+            **payload,
+            "lines": lines,
+            "line_count": len(lines),
+            "pagination": pagination,
+        }
+        if output != "raw":
+            payload["console"] = "\n".join(lines)
         return _profile_command_payload(payload, output)
     except Exception as exc:
         return _error(exc)
@@ -867,6 +885,8 @@ async def gdb_read_memory(
     address: str,
     count: int,
     output: str = "structured",
+    cursor: str | None = None,
+    page_size: int | None = None,
 ) -> dict[str, Any]:
     """Read raw memory bytes."""
 
@@ -876,21 +896,53 @@ async def gdb_read_memory(
             raise ValueError("count must be between 1 and 1048576 bytes")
         _require_output_profile(output)
         session = await manager.get(session_id)
-        payload = _result(
-            session,
-            await session.execute(
-                _mi_read_memory_bytes_command(address, count),
-                timeout=10.0,
-            ),
+        page_start, page_end, pagination = paginate_range(
+            count,
+            cursor=cursor,
+            page_size=page_size,
+            default_page_size=count,
+            max_page_size=1_048_576,
         )
+        read_count = max(0, page_end - page_start)
+        read_address = f"({address})+{page_start}" if page_start else address
+        if read_count:
+            payload = _result(
+                session,
+                await session.execute(
+                    _mi_read_memory_bytes_command(read_address, read_count),
+                    timeout=10.0,
+                ),
+            )
+        else:
+            payload = {
+                "ok": True,
+                "session_id": session_id,
+                "command": None,
+                "result_class": "done",
+                "results": {"memory": []},
+                "truncated": False,
+                "output_limit_chars": session.output_limit_chars,
+            }
         byte_count = len(_read_memory_contents(payload))
+        payload = {
+            **payload,
+            "address": address,
+            "read_address": read_address,
+            "requested_byte_count": count,
+            "requested_page_bytes": read_count,
+            "returned_byte_count": byte_count,
+            "pagination": pagination,
+        }
         return _profile_command_payload(
             payload,
             output,
             summary_fields={
                 "address": address,
+                "read_address": read_address,
                 "requested_byte_count": count,
+                "requested_page_bytes": read_count,
                 "returned_byte_count": byte_count,
+                "pagination": pagination,
             },
         )
     except Exception as exc:
@@ -1016,6 +1068,8 @@ async def gdb_info_files(session_id: str) -> dict[str, Any]:
 async def gdb_memory_mappings(
     session_id: str,
     output: str = "structured",
+    cursor: str | None = None,
+    page_size: int | None = None,
 ) -> dict[str, Any]:
     """Return process memory mappings when supported by the target."""
 
@@ -1023,6 +1077,21 @@ async def gdb_memory_mappings(
         _require_output_profile(output)
         session = await manager.get(session_id)
         payload = _result(session, await session.execute("info proc mappings", timeout=10.0))
+        lines, pagination = paginate_text_lines(
+            str(payload.get("console") or ""),
+            cursor=cursor,
+            page_size=page_size,
+            default_page_size=200,
+            max_page_size=2_000,
+        )
+        payload = {
+            **payload,
+            "lines": lines,
+            "line_count": len(lines),
+            "pagination": pagination,
+        }
+        if output != "raw":
+            payload["console"] = "\n".join(lines)
         return _profile_command_payload(payload, output)
     except Exception as exc:
         return _error(exc)

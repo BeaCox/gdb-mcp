@@ -13,6 +13,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from ..config import ServerConfig
+from ..pagination import paginate_items, pagination_metadata
 from ..resources import command_reference_index, resource_index, tool_profile
 from ..responses import error_response
 from ..session import SessionManager
@@ -86,6 +87,8 @@ async def _version_for(path: str | None, *args: str) -> str | None:
 async def gdb_recent_events(
     session_id: str,
     limit: int = 100,
+    cursor: str | None = None,
+    page_size: int | None = None,
 ) -> dict[str, Any]:
     """Return recent MI records, including asynchronous stop and thread events."""
 
@@ -93,10 +96,30 @@ async def gdb_recent_events(
         if not 1 <= limit <= 500:
             raise ValueError("limit must be between 1 and 500")
         session = await _require_manager().get(session_id)
+        all_events = session.recent_records(500)
+        if cursor is None and page_size is None:
+            events = all_events[-limit:]
+            page_start = max(0, len(all_events) - len(events))
+            pagination = pagination_metadata(
+                start=page_start,
+                end=len(all_events),
+                total_count=len(all_events),
+                page_size=limit,
+            )
+        else:
+            events, pagination = paginate_items(
+                all_events,
+                cursor=cursor,
+                page_size=page_size,
+                default_page_size=limit,
+                max_page_size=500,
+            )
         return {
             "ok": True,
             "session_id": session_id,
-            "events": session.recent_records(limit),
+            "events": events,
+            "event_count": len(events),
+            "pagination": pagination,
         }
     except Exception as exc:
         return _error(exc)
@@ -105,6 +128,8 @@ async def gdb_recent_events(
 async def gdb_recent_commands(
     session_id: str,
     limit: int = 100,
+    cursor: str | None = None,
+    page_size: int | None = None,
 ) -> dict[str, Any]:
     """Return recent commands sent to GDB for one session."""
 
@@ -112,10 +137,30 @@ async def gdb_recent_commands(
         if not 1 <= limit <= 200:
             raise ValueError("limit must be between 1 and 200")
         session = await _require_manager().get(session_id)
+        all_commands = session.recent_commands(200)
+        if cursor is None and page_size is None:
+            commands = all_commands[-limit:]
+            page_start = max(0, len(all_commands) - len(commands))
+            pagination = pagination_metadata(
+                start=page_start,
+                end=len(all_commands),
+                total_count=len(all_commands),
+                page_size=limit,
+            )
+        else:
+            commands, pagination = paginate_items(
+                all_commands,
+                cursor=cursor,
+                page_size=page_size,
+                default_page_size=limit,
+                max_page_size=200,
+            )
         return {
             "ok": True,
             "session_id": session_id,
-            "commands": session.recent_commands(limit),
+            "commands": commands,
+            "command_count": len(commands),
+            "pagination": pagination,
         }
     except Exception as exc:
         return _error(exc)
@@ -313,6 +358,20 @@ async def gdb_capabilities() -> dict[str, Any]:
                 "gdb_got",
                 "gdb_binary_summary",
             ],
+            "pagination": {
+                "cursor_format": "non-negative decimal offset",
+                "fields": ["cursor", "page_size", "pagination.next_cursor"],
+                "tools": [
+                    "gdb_symbols",
+                    "gdb_got",
+                    "gdb_read_memory",
+                    "gdb_thread_apply_all_backtrace",
+                    "gdb_memory_mappings",
+                    "gdb_vmmap_structured",
+                    "gdb_recent_commands",
+                    "gdb_recent_events",
+                ],
+            },
             "hex_compaction": "Full hexadecimal strings are normalized to shorter canonical hex.",
         },
         "safety": {

@@ -522,6 +522,20 @@ REFERENCE_RESOURCES: dict[str, dict[str, Any]] = {
                 "gdb_thread_apply_all_backtrace",
                 "gdb_recent_commands",
             ],
+            "pagination": {
+                "cursor_format": "non-negative decimal offset",
+                "fields": ["cursor", "page_size", "pagination.next_cursor"],
+                "tools": [
+                    "gdb_symbols",
+                    "gdb_got",
+                    "gdb_read_memory",
+                    "gdb_thread_apply_all_backtrace",
+                    "gdb_memory_mappings",
+                    "gdb_vmmap_structured",
+                    "gdb_recent_commands",
+                    "gdb_recent_events",
+                ],
+            },
         },
     },
 }

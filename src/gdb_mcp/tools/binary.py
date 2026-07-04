@@ -55,6 +55,7 @@ from ..analysis import (
 from ..analysis import (
     register_rows as _register_rows,
 )
+from ..pagination import paginate_items, paginate_text_lines
 from ..session import GdbSession, _truncate_text
 from .breakpoints import gdb_set_breakpoint
 from .inspection import (
@@ -221,6 +222,8 @@ async def gdb_vmmap_structured(
     writable: bool = False,
     include_gaps: bool = False,
     output: str = "structured",
+    cursor: str | None = None,
+    page_size: int | None = None,
 ) -> dict[str, Any]:
     """Return structured virtual memory mappings with address/module/perms filters."""
 
@@ -251,6 +254,15 @@ async def gdb_vmmap_structured(
             filtered = [item for item in filtered if "x" in str(item.get("perms", ""))]
         if writable:
             filtered = [item for item in filtered if "w" in str(item.get("perms", ""))]
+        page_default = max(1, len(filtered))
+        max_mapping_page_size = max(2_000, page_default)
+        paged_mappings, pagination = paginate_items(
+            filtered,
+            cursor=cursor,
+            page_size=page_size,
+            default_page_size=page_default,
+            max_page_size=max_mapping_page_size,
+        )
 
         gaps: list[dict[str, str]] = []
         if include_gaps:
@@ -280,9 +292,11 @@ async def gdb_vmmap_structured(
             },
             "address": _hex_or_none(address_value),
             "address_evaluation": address_payload,
-            "mappings": filtered,
+            "mappings": paged_mappings,
             "all_mapping_count": len(mappings),
-            "mapping_count": len(filtered),
+            "filtered_mapping_count": len(filtered),
+            "mapping_count": len(paged_mappings),
+            "pagination": pagination,
             "gaps": gaps,
         }
         return _profile_large_payload(
@@ -291,8 +305,9 @@ async def gdb_vmmap_structured(
             summary_fields={
                 "filters": payload["filters"],
                 "address": payload["address"],
-                "mappings": filtered[:20],
+                "mappings": paged_mappings[:20],
                 "gap_count": len(gaps),
+                "pagination": pagination,
             },
         )
     except Exception as exc:
@@ -670,6 +685,8 @@ async def _run_readelf(
     args: list[str],
     timeout: float,
     output: str = "raw",
+    cursor: str | None = None,
+    page_size: int | None = None,
 ) -> dict[str, Any]:
     _require_output_profile(output)
     readelf = shutil.which("readelf")
@@ -690,9 +707,20 @@ async def _run_readelf(
         process.kill()
         await process.wait()
         return {"ok": False, "error": f"readelf timed out after {timeout} seconds"}
+    stdout_text = stdout.decode(errors="replace")
+    stdout_lines, stdout_pagination = paginate_text_lines(
+        stdout_text,
+        cursor=cursor,
+        page_size=page_size,
+        default_page_size=max(1, min(len(stdout_text.splitlines()) or 1, 10_000)),
+        max_page_size=10_000,
+    )
+    if cursor is not None or page_size is not None:
+        stdout_text = "\n".join(stdout_lines)
+
     output_limit = max(1_000, runtime_config.output_limit_chars // 8)
     decoded_stdout, stdout_truncated = _truncate_text(
-        stdout.decode(errors="replace"),
+        stdout_text,
         output_limit,
     )
     decoded_stderr, stderr_truncated = _truncate_text(
@@ -710,6 +738,7 @@ async def _run_readelf(
         "stderr_truncated": stderr_truncated,
         "truncated": stdout_truncated or stderr_truncated,
         "output_limit_chars": output_limit,
+        "stdout_pagination": stdout_pagination,
     }
     return _profile_large_payload(
         payload,
@@ -718,6 +747,7 @@ async def _run_readelf(
             "command": payload["command"],
             "stdout_truncated": stdout_truncated,
             "stderr_truncated": stderr_truncated,
+            "stdout_pagination": stdout_pagination,
         },
     )
 
@@ -881,6 +911,8 @@ async def gdb_symbols(
     kind: str = "functions",
     limit: int = 100,
     output: str = "structured",
+    cursor: str | None = None,
+    page_size: int | None = None,
 ) -> dict[str, Any]:
     """Search GDB-known functions or variables and return parsed symbol rows."""
 
@@ -896,13 +928,22 @@ async def gdb_symbols(
             command += f" {query}"
         session = await manager.get(session_id)
         payload = _result(session, await session.execute(command, timeout=10.0))
-        symbols = _parse_gdb_symbols(str(payload.get("console") or ""), limit)
+        all_symbols = _parse_gdb_symbols(str(payload.get("console") or ""), 1_000)
+        symbols, pagination = paginate_items(
+            all_symbols,
+            cursor=cursor,
+            page_size=page_size,
+            default_page_size=limit,
+            max_page_size=1_000,
+        )
         payload = {
             **payload,
             "query": query,
             "kind": kind,
             "symbols": symbols,
             "symbol_count": len(symbols),
+            "all_symbol_count": len(all_symbols),
+            "pagination": pagination,
         }
         return _profile_large_payload(
             payload,
@@ -911,7 +952,9 @@ async def gdb_symbols(
                 "query": query,
                 "kind": kind,
                 "symbol_count": len(symbols),
+                "all_symbol_count": len(all_symbols),
                 "symbols": symbols[:20],
+                "pagination": pagination,
             },
         )
     except Exception as exc:
@@ -926,6 +969,8 @@ async def gdb_got(
     limit: int = 200,
     timeout: float = 10.0,
     output: str = "structured",
+    cursor: str | None = None,
+    page_size: int | None = None,
 ) -> dict[str, Any]:
     """List dynamic relocation/GOT entries, optionally annotated with runtime VAs."""
 
@@ -965,8 +1010,16 @@ async def gdb_got(
             piebase = await gdb_piebase(session.session_id, module=module)
             runtime_base = _parse_int(piebase.get("base"))
 
+        relocation_page, pagination = paginate_items(
+            relocations,
+            cursor=cursor,
+            page_size=page_size,
+            default_page_size=limit,
+            max_page_size=2_000,
+        )
+
         annotated: list[dict[str, Any]] = []
-        for item in relocations[:limit]:
+        for item in relocation_page:
             offset = _parse_int(item.get("offset"))
             runtime_address = (
                 runtime_base + offset if runtime_base is not None and offset is not None else offset
@@ -982,6 +1035,7 @@ async def gdb_got(
             "entries": annotated,
             "entry_count": len(annotated),
             "all_entry_count": len(relocations),
+            "pagination": pagination,
             "piebase": piebase,
             "checksec": checksec,
             "readelf": (
@@ -999,6 +1053,7 @@ async def gdb_got(
                 "entry_count": len(annotated),
                 "all_entry_count": len(relocations),
                 "entries": annotated[:20],
+                "pagination": pagination,
                 "readelf": _command_status(relocations_result),
             },
         )

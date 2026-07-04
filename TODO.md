@@ -56,7 +56,7 @@ open source GDB MCP servers, including `signal-slot/mcp-gdb`,
     and memory-heavy tools.
   - Acceptance: large outputs have predictable bounded responses.
 
-- [ ] Add pagination or resource handles for large outputs.
+- [x] Add pagination or resource handles for large outputs.
   - Candidate tools: symbols, GOT/relocations, readelf output, memory dumps,
     thread-all backtraces, and command history.
   - Acceptance: tools can return a cursor or resource handle instead of forcing

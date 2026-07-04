@@ -18,6 +18,8 @@ Response-size profiles:
   data and omits duplicate raw command text.
 - `output="raw"` keeps raw MI/readelf command payloads where available.
 - Existing `include_raw=true` context arguments are treated like `output="raw"`.
+- Large-output tools that accept `cursor` and `page_size` return a `pagination`
+  object with `next_cursor` when another page is available.
 
 ## Session Management
 
@@ -82,7 +84,7 @@ Response-size profiles:
 | `gdb_threads` | Read | `session_id` | List threads. |
 | `gdb_select_thread` | Mutation | `session_id`, `thread_id` | Select a thread. |
 | `gdb_backtrace` | Read | `session_id`, `max_frames`, `output` | List stack frames. |
-| `gdb_thread_apply_all_backtrace` | Read | `session_id`, `max_frames`, `output` | Backtrace every thread. |
+| `gdb_thread_apply_all_backtrace` | Read | `session_id`, `max_frames`, `output`, `cursor`, `page_size` | Backtrace every thread. |
 | `gdb_select_frame` | Mutation | `session_id`, `frame` | Select a stack frame. |
 | `gdb_locals` | Read | `session_id`, `output` | List locals in the selected frame. |
 | `gdb_stack_arguments` | Read | `session_id`, `max_frames`, `output` | List stack frame arguments. |
@@ -107,15 +109,15 @@ Response-size profiles:
 | `gdb_registers` | Read | `session_id`, `register_numbers`, `fmt` | Read registers. |
 | `gdb_register_names` | Read | `session_id`, `register_numbers` | List register names known to GDB. |
 | `gdb_read_register` | Read | `session_id`, `register` | Read one named register such as `rax`, `pc`, or `$rip`. |
-| `gdb_read_memory` | Read | `session_id`, `address`, `count`, `output` | Read raw memory bytes. |
+| `gdb_read_memory` | Read | `session_id`, `address`, `count`, `output`, `cursor`, `page_size` | Read raw memory bytes. |
 | `gdb_write_memory` | Unsafe | `session_id`, `address`, `data_hex` | Write raw memory bytes. |
 | `gdb_search_memory` | Read | `session_id`, `start_address`, `length`, `pattern`, `output` | Search memory with GDB `find`. |
 | `gdb_read_c_string` | Read | `session_id`, `address`, `max_bytes`, `output` | Read a NUL-terminated string. |
 | `gdb_telescope` | Read | `session_id`, `address`, `count`, `pointer_size`, `max_depth`, `output` | Read pointer-sized slots and annotate pointer chains with mapping metadata. |
 | `gdb_shared_libraries` | Read | `session_id` | List shared libraries known to GDB. |
 | `gdb_info_files` | Read | `session_id` | Return `info files`. |
-| `gdb_memory_mappings` | Read | `session_id`, `output` | Return Linux process mappings when available. |
-| `gdb_vmmap_structured` | Read | `session_id`, `address`, `module`, `executable`, `writable`, `output` | Return parsed mappings with address/module/permission filters and optional gaps. |
+| `gdb_memory_mappings` | Read | `session_id`, `output`, `cursor`, `page_size` | Return Linux process mappings when available. |
+| `gdb_vmmap_structured` | Read | `session_id`, `address`, `module`, `executable`, `writable`, `output`, `cursor`, `page_size` | Return parsed mappings with address/module/permission filters and optional gaps. |
 | `gdb_address_info` | Read | `session_id`, `expression`, `read_string` | Resolve an address to its mapping, module offsets, nearest symbol, and optional C string. |
 | `gdb_piebase` | Read | `session_id`, `offset`, `module` | Calculate a runtime VA from a PIE/module base plus offset. |
 | `gdb_checksec` | Read | `session_id`, `file_path`, `output` | Return ELF hardening settings such as PIE, NX, RELRO, canary, Build-ID, IBT, and SHSTK. |
@@ -132,8 +134,8 @@ and module-offset oriented.
 | `gdb_pwn_context` | Read | `session_id`, `max_frames`, `telescope_count`, `nearpc_lines`, `output` | Return a pwndbg-style context with location, backtrace, registers, `$pc/$sp`, near-PC disassembly, stack telescope, and vmmap. |
 | `gdb_binary_summary` | Read | `session_id`, `file_path`, `output` | Return a pwn-oriented binary summary with checksec, ELF metadata, runtime base, entry context, and mapping summary. |
 | `gdb_register_context` | Read | `session_id` | Return grouped registers for quick instruction pointer, stack pointer, argument, return, and general-purpose inspection. |
-| `gdb_symbols` | Read | `session_id`, `query`, `kind`, `limit`, `output` | Search GDB-known functions or variables and return parsed symbol rows. |
-| `gdb_got` | Read | `session_id`, `file_path`, `query`, `module`, `output` | List dynamic relocation/GOT entries from `readelf -r` and annotate runtime VAs when a session is available. |
+| `gdb_symbols` | Read | `session_id`, `query`, `kind`, `limit`, `output`, `cursor`, `page_size` | Search GDB-known functions or variables and return parsed symbol rows. |
+| `gdb_got` | Read | `session_id`, `file_path`, `query`, `module`, `output`, `cursor`, `page_size` | List dynamic relocation/GOT entries from `readelf -r` and annotate runtime VAs when a session is available. |
 | `gdb_rva_info` | Read | `session_id`, `offset`, `module`, `read_string` | Resolve a module RVA to a runtime address and annotate it with mapping, symbol, and optional string context. |
 | `gdb_break_rva` | Mutation | `session_id`, `offset`, `module`, `temporary`, `hardware` | Set a breakpoint at module PIE base plus an RVA-style offset. |
 
@@ -149,8 +151,8 @@ and module-offset oriented.
 
 | Tool | Safety | Main Parameters | Purpose |
 | --- | --- | --- | --- |
-| `gdb_recent_events` | Read | `session_id`, `limit` | Return recent MI async/result records. |
-| `gdb_recent_commands` | Read | `session_id`, `limit` | Return recent commands sent to GDB. |
+| `gdb_recent_events` | Read | `session_id`, `limit`, `cursor`, `page_size` | Return recent MI async/result records. |
+| `gdb_recent_commands` | Read | `session_id`, `limit`, `cursor`, `page_size` | Return recent commands sent to GDB. |
 | `gdb_session_diagnostics` | Read | `session_id` | Return session state plus recent commands/events. |
 | `gdb_command_reference` | Read | none | Return a compact index of safe flows and MCP reference resources. |
 | `gdb_capabilities` | Read | none | Return workflow groups, core and advanced tool profiles, output strategy, safety posture, and reference-project notes. |

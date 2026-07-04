@@ -59,6 +59,7 @@ from gdb_mcp.server import (
     gdb_read_memory,
     gdb_read_register,
     gdb_recent_commands,
+    gdb_recent_events,
     gdb_record_status,
     gdb_register_context,
     gdb_register_names,
@@ -325,15 +326,50 @@ class ServerContractTests(unittest.TestCase):
             self.assertGreater(memory_summary["returned_byte_count"], 0)
             self.assertNotIn("results", memory_summary)
 
+            memory_page = await gdb_read_memory(
+                session_id,
+                "$sp",
+                64,
+                output="summary",
+                cursor="8",
+                page_size=8,
+            )
+            self.assertTrue(memory_page["ok"], memory_page)
+            self.assertEqual(memory_page["read_address"], "($sp)+8")
+            self.assertEqual(memory_page["requested_page_bytes"], 8)
+            self.assertEqual(memory_page["pagination"]["cursor"], "8")
+            self.assertEqual(memory_page["pagination"]["next_cursor"], "16")
+
             symbols_summary = await gdb_symbols(
                 session_id,
                 query="main",
                 output="summary",
+                page_size=1,
             )
             self.assertTrue(symbols_summary["ok"], symbols_summary)
             self.assertEqual(symbols_summary["output_profile"], "summary")
             self.assertIn("symbol_count", symbols_summary)
+            self.assertIn("pagination", symbols_summary)
             self.assertNotIn("console", symbols_summary)
+
+            recent_commands = await gdb_recent_commands(
+                session_id,
+                cursor="0",
+                page_size=2,
+            )
+            self.assertTrue(recent_commands["ok"], recent_commands)
+            self.assertEqual(recent_commands["command_count"], 2)
+            self.assertEqual(recent_commands["pagination"]["cursor"], "0")
+            self.assertTrue(recent_commands["pagination"]["has_more"])
+
+            recent_events = await gdb_recent_events(
+                session_id,
+                cursor="0",
+                page_size=2,
+            )
+            self.assertTrue(recent_events["ok"], recent_events)
+            self.assertEqual(recent_events["event_count"], 2)
+            self.assertEqual(recent_events["pagination"]["cursor"], "0")
 
             invalid_profile = await gdb_read_memory(
                 session_id,
@@ -781,6 +817,28 @@ class ServerContractTests(unittest.TestCase):
         self.assertTrue(summary["stderr_truncated"])
         self.assertNotIn("stdout", summary)
         self.assertNotIn("stderr", summary)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_readelf = Path(tmp) / "readelf"
+            fake_readelf.write_text(
+                "#!/usr/bin/env python3\n"
+                "print('\\n'.join(f'line-{index}' for index in range(5)))\n",
+                encoding="utf-8",
+            )
+            fake_readelf.chmod(0o755)
+            with patch("gdb_mcp.server.shutil.which", return_value=str(fake_readelf)):
+                paged = await _run_readelf(
+                    "/tmp/sample",
+                    ["-S"],
+                    timeout=1.0,
+                    cursor="1",
+                    page_size=2,
+                )
+
+        self.assertTrue(paged["ok"])
+        self.assertEqual(paged["stdout"], "line-1\nline-2")
+        self.assertEqual(paged["stdout_pagination"]["cursor"], "1")
+        self.assertEqual(paged["stdout_pagination"]["next_cursor"], "3")
 
     def test_readelf_separates_options_from_file_path(self) -> None:
         asyncio.run(self._test_readelf_separates_options_from_file_path())
