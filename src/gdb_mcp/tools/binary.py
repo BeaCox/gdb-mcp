@@ -73,6 +73,7 @@ from .shared import (
     _mi_read_memory_bytes_command,
     _require_cli_target,
     _require_max_frames,
+    _require_output_profile,
     _require_read_expression,
     _require_single_line,
     _result,
@@ -145,6 +146,73 @@ async def _structured_mappings(session: GdbSession) -> tuple[dict[str, Any], lis
     return payload, mappings
 
 
+def _strip_large_fields(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _strip_large_fields(item)
+            for key, item in value.items()
+            if key not in {"raw", "console", "target", "log", "stdout", "stderr"}
+        }
+    if isinstance(value, list):
+        return [_strip_large_fields(item) for item in value]
+    return value
+
+
+def _command_status(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: payload.get(key)
+        for key in (
+            "ok",
+            "returncode",
+            "result_class",
+            "truncated",
+            "stdout_truncated",
+            "stderr_truncated",
+            "output_limit_chars",
+        )
+        if key in payload
+    }
+
+
+def _profile_large_payload(
+    payload: dict[str, Any],
+    output: str,
+    *,
+    summary_fields: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    profile = _require_output_profile(output)
+    if profile == "raw":
+        return {**payload, "output_profile": "raw"}
+    if profile == "structured":
+        structured = _strip_large_fields(payload)
+        structured["output_profile"] = "structured"
+        return structured
+
+    keys = (
+        "ok",
+        "session_id",
+        "file_path",
+        "query",
+        "kind",
+        "module",
+        "entry_count",
+        "all_entry_count",
+        "symbol_count",
+        "mapping_count",
+        "all_mapping_count",
+        "section_count",
+    )
+    summary = {
+        key: payload[key]
+        for key in keys
+        if key in payload
+    }
+    summary["output_profile"] = "summary"
+    if summary_fields:
+        summary.update(summary_fields)
+    return summary
+
+
 async def gdb_vmmap_structured(
     session_id: str,
     address: str | None = None,
@@ -152,10 +220,12 @@ async def gdb_vmmap_structured(
     executable: bool = False,
     writable: bool = False,
     include_gaps: bool = False,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Return structured virtual memory mappings with address/module/perms filters."""
 
     try:
+        _require_output_profile(output)
         if address is not None:
             _require_read_expression("address", address)
         if module is not None:
@@ -199,7 +269,7 @@ async def gdb_vmmap_structured(
                             "size": hex(right_start - left_end),
                         }
                     )
-        return {
+        payload = {
             **payload,
             "ok": bool(payload.get("ok")),
             "filters": {
@@ -215,6 +285,16 @@ async def gdb_vmmap_structured(
             "mapping_count": len(filtered),
             "gaps": gaps,
         }
+        return _profile_large_payload(
+            payload,
+            output,
+            summary_fields={
+                "filters": payload["filters"],
+                "address": payload["address"],
+                "mappings": filtered[:20],
+                "gap_count": len(gaps),
+            },
+        )
     except Exception as exc:
         return _error(exc)
 
@@ -278,10 +358,12 @@ async def gdb_telescope(
     pointer_size: int = 8,
     max_depth: int = 1,
     reverse: bool = False,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Read pointer-sized stack/memory slots and annotate recursively dereferenced values."""
 
     try:
+        _require_output_profile(output)
         if not 1 <= count <= 128:
             raise ValueError("count must be between 1 and 128")
         if pointer_size not in {4, 8}:
@@ -351,7 +433,7 @@ async def gdb_telescope(
                 )
                 current = next_value
             entries.append(entry)
-        return {
+        payload = {
             "ok": bool(memory.get("ok")),
             "session_id": session_id,
             "start": hex(start),
@@ -363,6 +445,18 @@ async def gdb_telescope(
             "memory": memory,
             "vmmap_ok": vmmap_payload.get("ok"),
         }
+        if output != "raw":
+            payload["memory"] = _command_status(memory)
+        return _profile_large_payload(
+            payload,
+            output,
+            summary_fields={
+                "start": hex(start),
+                "address_expression": address,
+                "entry_count": len(entries),
+                "entries": entries[: min(8, len(entries))],
+            },
+        )
     except Exception as exc:
         return _error(exc)
 
@@ -492,10 +586,12 @@ async def gdb_pwn_context(
     max_frames: int = 10,
     telescope_count: int = 8,
     nearpc_lines: int = 12,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Return a pwndbg-style structured context for stripped/optimized binaries."""
 
     try:
+        _require_output_profile(output)
         _require_max_frames(max_frames)
         if not 1 <= telescope_count <= 64:
             raise ValueError("telescope_count must be between 1 and 64")
@@ -523,7 +619,7 @@ async def gdb_pwn_context(
         pc_value = pc.get("value")
         if isinstance(pc_value, str):
             pc_info = await gdb_address_info(session_id, pc_value, read_string=False)
-        return {
+        payload = {
             "ok": any(
                 bool(item.get("ok"))
                 for item in (location, backtrace, registers, pc, sp, vmmap, nearpc, telescope)
@@ -550,11 +646,32 @@ async def gdb_pwn_context(
             "stack": telescope,
             "vmmap": vmmap,
         }
+        return _profile_large_payload(
+            payload,
+            output,
+            summary_fields={
+                "summary": payload["summary"],
+                "pc": pc.get("value"),
+                "sp": sp.get("value"),
+                "frame_count": len(backtrace.get("frames", []))
+                if backtrace.get("output_profile") == "summary"
+                else len(backtrace.get("results", {}).get("stack", []))
+                if isinstance(backtrace.get("results"), dict)
+                else 0,
+                "mapping_count": vmmap.get("mapping_count"),
+            },
+        )
     except Exception as exc:
         return _error(exc)
 
 
-async def _run_readelf(file_path: str, args: list[str], timeout: float) -> dict[str, Any]:
+async def _run_readelf(
+    file_path: str,
+    args: list[str],
+    timeout: float,
+    output: str = "raw",
+) -> dict[str, Any]:
+    _require_output_profile(output)
     readelf = shutil.which("readelf")
     if readelf is None:
         return {"ok": False, "error": "readelf is not available on PATH"}
@@ -582,8 +699,10 @@ async def _run_readelf(file_path: str, args: list[str], timeout: float) -> dict[
         stderr.decode(errors="replace"),
         output_limit,
     )
-    return {
+    payload = {
         "ok": process.returncode == 0,
+        "command": ["readelf", "-W", *args, "--", file_path],
+        "file_path": file_path,
         "returncode": process.returncode,
         "stdout": decoded_stdout,
         "stderr": decoded_stderr,
@@ -592,6 +711,15 @@ async def _run_readelf(file_path: str, args: list[str], timeout: float) -> dict[
         "truncated": stdout_truncated or stderr_truncated,
         "output_limit_chars": output_limit,
     }
+    return _profile_large_payload(
+        payload,
+        output,
+        summary_fields={
+            "command": payload["command"],
+            "stdout_truncated": stdout_truncated,
+            "stderr_truncated": stderr_truncated,
+        },
+    )
 
 
 async def _resolve_elf_file(
@@ -614,10 +742,12 @@ async def gdb_checksec(
     session_id: str | None = None,
     file_path: str | None = None,
     timeout: float = 10.0,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Return ELF hardening settings such as PIE, NX, RELRO, and stack canary."""
 
     try:
+        _require_output_profile(output)
         path, session = await _resolve_elf_file(session_id=session_id, file_path=file_path)
         header, program_headers, dynamic, symbols, notes = await asyncio.gather(
             _run_readelf(path, ["-h"], timeout),
@@ -638,19 +768,26 @@ async def gdb_checksec(
         security["build_id"] = build_id_match.group("build_id") if build_id_match else ""
         security["ibt"] = "IBT" in notes_stdout
         security["shstk"] = "SHSTK" in notes_stdout
-        return {
+        commands = {
+            "header": header,
+            "program_headers": program_headers,
+            "dynamic": dynamic,
+            "symbols": symbols,
+            "notes": notes,
+        }
+        command_status = {name: _command_status(result) for name, result in commands.items()}
+        payload = {
             "ok": ok,
             "session_id": session.session_id if session else session_id,
             "file_path": path,
             "security": security,
-            "commands": {
-                "header": header,
-                "program_headers": program_headers,
-                "dynamic": dynamic,
-                "symbols": symbols,
-                "notes": notes,
-            },
+            "commands": commands if output == "raw" else command_status,
         }
+        return _profile_large_payload(
+            payload,
+            output,
+            summary_fields={"security": security, "commands": command_status},
+        )
     except Exception as exc:
         return _error(exc)
 
@@ -660,10 +797,12 @@ async def gdb_elf_info(
     file_path: str | None = None,
     include_raw: bool = False,
     timeout: float = 10.0,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Return ELF header, security, section, segment, and build-id metadata."""
 
     try:
+        profile = "raw" if include_raw else _require_output_profile(output)
         path, session = await _resolve_elf_file(session_id=session_id, file_path=file_path)
         header, sections, program_headers, dynamic, notes = await asyncio.gather(
             _run_readelf(path, ["-h"], timeout),
@@ -677,13 +816,14 @@ async def gdb_elf_info(
         sections_stdout = str(sections.get("stdout") or "")
         notes_stdout = str(notes.get("stdout") or "")
         build_id_match = _BUILD_ID_RE.search(notes_stdout)
+        parsed_sections = _parse_sections(sections_stdout)
         payload: dict[str, Any] = {
             "ok": bool(header.get("ok")),
             "session_id": session.session_id if session else session_id,
             "file_path": path,
             "header": _parse_elf_header(header_stdout),
-            "sections": _parse_sections(sections_stdout),
-            "section_count": len(_parse_sections(sections_stdout)),
+            "sections": parsed_sections,
+            "section_count": len(parsed_sections),
             "security": _parse_checksec(
                 header_stdout,
                 str(program_headers.get("stdout") or ""),
@@ -692,7 +832,7 @@ async def gdb_elf_info(
             ),
             "build_id": build_id_match.group("build_id") if build_id_match else "",
         }
-        if include_raw:
+        if profile == "raw":
             payload["raw"] = {
                 "header": header,
                 "sections": sections,
@@ -701,7 +841,16 @@ async def gdb_elf_info(
                 "notes": notes,
                 "symbols": symbols,
             }
-        return payload
+        return _profile_large_payload(
+            payload,
+            profile,
+            summary_fields={
+                "header": payload["header"],
+                "section_count": payload["section_count"],
+                "security": payload["security"],
+                "build_id": payload["build_id"],
+            },
+        )
     except Exception as exc:
         return _error(exc)
 
@@ -731,11 +880,13 @@ async def gdb_symbols(
     query: str = "",
     kind: str = "functions",
     limit: int = 100,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Search GDB-known functions or variables and return parsed symbol rows."""
 
     try:
         _require_single_line("query", query)
+        _require_output_profile(output)
         if kind not in {"functions", "variables"}:
             raise ValueError("kind must be one of: functions, variables")
         if not 1 <= limit <= 1000:
@@ -746,13 +897,23 @@ async def gdb_symbols(
         session = await manager.get(session_id)
         payload = _result(session, await session.execute(command, timeout=10.0))
         symbols = _parse_gdb_symbols(str(payload.get("console") or ""), limit)
-        return {
+        payload = {
             **payload,
             "query": query,
             "kind": kind,
             "symbols": symbols,
             "symbol_count": len(symbols),
         }
+        return _profile_large_payload(
+            payload,
+            output,
+            summary_fields={
+                "query": query,
+                "kind": kind,
+                "symbol_count": len(symbols),
+                "symbols": symbols[:20],
+            },
+        )
     except Exception as exc:
         return _error(exc)
 
@@ -764,11 +925,13 @@ async def gdb_got(
     module: str | None = None,
     limit: int = 200,
     timeout: float = 10.0,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """List dynamic relocation/GOT entries, optionally annotated with runtime VAs."""
 
     try:
         _require_single_line("query", query)
+        _require_output_profile(output)
         if module is not None:
             _require_single_line("module", module)
         if not 1 <= limit <= 2000:
@@ -778,7 +941,11 @@ async def gdb_got(
             session = await manager.get(session_id)
         relocations_result, checksec = await asyncio.gather(
             _run_readelf(path, ["-r"], timeout),
-            gdb_checksec(session_id=session.session_id if session else None, file_path=path),
+            gdb_checksec(
+                session_id=session.session_id if session else None,
+                file_path=path,
+                output="raw" if output == "raw" else "summary",
+            ),
         )
         relocations = _parse_readelf_relocations(str(relocations_result.get("stdout") or ""))
         if query:
@@ -806,7 +973,7 @@ async def gdb_got(
             )
             annotated.append({**item, "runtime_address": _hex_or_none(runtime_address)})
 
-        return {
+        payload = {
             "ok": bool(relocations_result.get("ok")),
             "session_id": session.session_id if session else session_id,
             "file_path": path,
@@ -817,8 +984,24 @@ async def gdb_got(
             "all_entry_count": len(relocations),
             "piebase": piebase,
             "checksec": checksec,
-            "readelf": relocations_result,
+            "readelf": (
+                relocations_result
+                if output == "raw"
+                else _command_status(relocations_result)
+            ),
         }
+        return _profile_large_payload(
+            payload,
+            output,
+            summary_fields={
+                "query": query,
+                "module": module,
+                "entry_count": len(annotated),
+                "all_entry_count": len(relocations),
+                "entries": annotated[:20],
+                "readelf": _command_status(relocations_result),
+            },
+        )
     except Exception as exc:
         return _error(exc)
 
@@ -862,10 +1045,12 @@ async def gdb_binary_summary(
     session_id: str | None = None,
     file_path: str | None = None,
     timeout: float = 10.0,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Return a pwn-oriented binary summary: ELF metadata, checksec, base, and maps."""
 
     try:
+        _require_output_profile(output)
         path, session = await _resolve_elf_file(session_id=session_id, file_path=file_path)
         if session is None and session_id is not None:
             session = await manager.get(session_id)
@@ -874,11 +1059,13 @@ async def gdb_binary_summary(
                 session_id=session.session_id if session else None,
                 file_path=path,
                 timeout=timeout,
+                output="raw" if output == "raw" else "structured",
             ),
             gdb_elf_info(
                 session_id=session.session_id if session else None,
                 file_path=path,
                 timeout=timeout,
+                output="raw" if output == "raw" else "structured",
             ),
         )
         vmmap: dict[str, Any] | None = None
@@ -903,7 +1090,7 @@ async def gdb_binary_summary(
                     hex(runtime_entry),
                     read_string=False,
                 )
-        return {
+        payload = {
             "ok": bool(checksec.get("ok") or elf_info.get("ok")),
             "session_id": session.session_id if session else session_id,
             "file_path": path,
@@ -923,5 +1110,10 @@ async def gdb_binary_summary(
             "entry_info": entry_info,
             "vmmap": vmmap,
         }
+        return _profile_large_payload(
+            payload,
+            output,
+            summary_fields={"summary": payload["summary"]},
+        )
     except Exception as exc:
         return _error(exc)

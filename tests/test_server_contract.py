@@ -18,6 +18,7 @@ from gdb_mcp.server import (
     _run_readelf,
     gdb_address_info,
     gdb_attach,
+    gdb_backtrace,
     gdb_binary_summary,
     gdb_break_rva,
     gdb_breakpoint_commands,
@@ -276,6 +277,74 @@ class ServerContractTests(unittest.TestCase):
             runtime_config.allow_unsafe_execute = previous
         self.assertFalse(result["ok"])
         self.assertIn("disabled by default", result["error"])
+
+    def test_response_size_profiles_are_consistent(self) -> None:
+        asyncio.run(self._test_response_size_profiles_are_consistent())
+
+    async def _test_response_size_profiles_are_consistent(self) -> None:
+        fake_gdb = Path(__file__).parent / "fixtures" / "fake_gdb.py"
+        fake_gdb.chmod(0o755)
+        session = await manager.create(gdb_path=str(fake_gdb))
+        try:
+            session_id = session.session_id
+
+            structured_backtrace = await gdb_backtrace(session_id, max_frames=3)
+            self.assertTrue(structured_backtrace["ok"], structured_backtrace)
+            self.assertEqual(structured_backtrace["output_profile"], "structured")
+            self.assertNotIn("raw", structured_backtrace)
+
+            raw_backtrace = await gdb_backtrace(session_id, max_frames=3, output="raw")
+            self.assertTrue(raw_backtrace["ok"], raw_backtrace)
+            self.assertEqual(raw_backtrace["output_profile"], "raw")
+            self.assertIn("raw", raw_backtrace)
+
+            summary_context = await gdb_context(session_id, output="summary")
+            self.assertTrue(summary_context["ok"], summary_context)
+            self.assertEqual(summary_context["output_profile"], "summary")
+            self.assertIn("summary", summary_context)
+            self.assertIn("frame_count", summary_context)
+            self.assertNotIn("raw", summary_context)
+            self.assertNotIn("backtrace", summary_context)
+
+            raw_context = await gdb_context(session_id, output="raw")
+            self.assertTrue(raw_context["ok"], raw_context)
+            self.assertEqual(raw_context["output_profile"], "raw")
+            self.assertIn("raw", raw_context)
+            self.assertIn("raw", raw_context["raw"]["backtrace"])
+            self.assertIn("raw", raw_context["raw"]["locals"])
+
+            memory_summary = await gdb_read_memory(
+                session_id,
+                "$sp",
+                64,
+                output="summary",
+            )
+            self.assertTrue(memory_summary["ok"], memory_summary)
+            self.assertEqual(memory_summary["output_profile"], "summary")
+            self.assertEqual(memory_summary["requested_byte_count"], 64)
+            self.assertGreater(memory_summary["returned_byte_count"], 0)
+            self.assertNotIn("results", memory_summary)
+
+            symbols_summary = await gdb_symbols(
+                session_id,
+                query="main",
+                output="summary",
+            )
+            self.assertTrue(symbols_summary["ok"], symbols_summary)
+            self.assertEqual(symbols_summary["output_profile"], "summary")
+            self.assertIn("symbol_count", symbols_summary)
+            self.assertNotIn("console", symbols_summary)
+
+            invalid_profile = await gdb_read_memory(
+                session_id,
+                "$sp",
+                64,
+                output="verbose",
+            )
+            self.assertFalse(invalid_profile["ok"])
+            self.assertIn("output must be one of", invalid_profile["error"])
+        finally:
+            await manager.close(session.session_id)
 
     def test_protocol_module_has_no_print_calls(self) -> None:
         path = Path(__file__).resolve().parents[1] / "src" / "gdb_mcp" / "session.py"
@@ -675,12 +744,43 @@ class ServerContractTests(unittest.TestCase):
                 runtime_config.output_limit_chars = previous
 
         self.assertTrue(result["ok"])
+        self.assertEqual(result["output_profile"], "raw")
         self.assertTrue(result["truncated"])
         self.assertTrue(result["stdout_truncated"])
         self.assertTrue(result["stderr_truncated"])
         self.assertLessEqual(len(result["stdout"]), result["output_limit_chars"])
         self.assertLessEqual(len(result["stderr"]), result["output_limit_chars"])
         self.assertIn("truncated", result["stdout"])
+
+        previous = runtime_config.output_limit_chars
+        runtime_config.output_limit_chars = 4_000
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                fake_readelf = Path(tmp) / "readelf"
+                fake_readelf.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import sys\n"
+                    "sys.stdout.write('A' * 5000)\n"
+                    "sys.stderr.write('B' * 2000)\n",
+                    encoding="utf-8",
+                )
+                fake_readelf.chmod(0o755)
+                with patch("gdb_mcp.server.shutil.which", return_value=str(fake_readelf)):
+                    summary = await _run_readelf(
+                        "/tmp/sample",
+                        ["-h"],
+                        timeout=1.0,
+                        output="summary",
+                    )
+        finally:
+            runtime_config.output_limit_chars = previous
+
+        self.assertTrue(summary["ok"])
+        self.assertEqual(summary["output_profile"], "summary")
+        self.assertTrue(summary["stdout_truncated"])
+        self.assertTrue(summary["stderr_truncated"])
+        self.assertNotIn("stdout", summary)
+        self.assertNotIn("stderr", summary)
 
     def test_readelf_separates_options_from_file_path(self) -> None:
         asyncio.run(self._test_readelf_separates_options_from_file_path())

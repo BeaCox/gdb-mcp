@@ -505,7 +505,15 @@ REFERENCE_RESOURCES: dict[str, dict[str, Any]] = {
         ],
         "output_strategy": {
             "prefer": "summary and structured fields from dedicated tools",
-            "raw_escape_hatch": "Set include_raw=true only when compact fields are insufficient.",
+            "profiles": {
+                "summary": "Short bounded summary and counts.",
+                "structured": "Default parsed data without duplicate raw command text.",
+                "raw": "Include raw MI/readelf payloads where available.",
+            },
+            "raw_escape_hatch": (
+                "Set output='raw' or legacy include_raw=true only when compact fields "
+                "are insufficient."
+            ),
             "large_output_candidates": [
                 "gdb_symbols",
                 "gdb_got",

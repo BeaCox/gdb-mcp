@@ -277,6 +277,11 @@ async def gdb_capabilities() -> dict[str, Any]:
         },
         "output_strategy": {
             "default_limit_chars": runtime_config.output_limit_chars,
+            "profiles": {
+                "summary": "Short bounded summary and counts.",
+                "structured": "Default parsed data without duplicate raw command text.",
+                "raw": "Include raw MI/readelf payloads where available.",
+            },
             "prefer_compact_tools": [
                 "gdb_run_and_context",
                 "gdb_continue_and_context",
@@ -286,8 +291,28 @@ async def gdb_capabilities() -> dict[str, Any]:
                 "gdb_pwn_context",
             ],
             "raw_payload_escape_hatch": (
-                "Set include_raw=true only when compact fields are insufficient."
+                "Set output='raw' or legacy include_raw=true only when compact fields "
+                "are insufficient."
             ),
+            "profiled_tools": [
+                "gdb_context",
+                "gdb_backtrace",
+                "gdb_locals",
+                "gdb_stack_arguments",
+                "gdb_frame_variables",
+                "gdb_read_memory",
+                "gdb_search_memory",
+                "gdb_read_c_string",
+                "gdb_memory_mappings",
+                "gdb_vmmap_structured",
+                "gdb_telescope",
+                "gdb_pwn_context",
+                "gdb_checksec",
+                "gdb_elf_info",
+                "gdb_symbols",
+                "gdb_got",
+                "gdb_binary_summary",
+            ],
             "hex_compaction": "Full hexadecimal strings are normalized to shorter canonical hex.",
         },
         "safety": {

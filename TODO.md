@@ -49,7 +49,7 @@ open source GDB MCP servers, including `signal-slot/mcp-gdb`,
     unsafe tools discoverable but clearly grouped as advanced workflows.
   - Acceptance: `gdb_capabilities` identifies core and advanced tool groups.
 
-- [ ] Add response-size profiles.
+- [x] Add response-size profiles.
   - Support consistent `summary`, `structured`, and `raw` output modes where
     useful.
   - Apply the same strategy to context, backtrace, variables, symbols, readelf,

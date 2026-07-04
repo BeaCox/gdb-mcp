@@ -11,6 +11,14 @@ Safety levels:
 - `Mutation`: changes debugger state such as selected frame, breakpoints, or paths.
 - `Unsafe`: requires `--unsafe` or `GDB_MCP_ALLOW_UNSAFE=1`.
 
+Response-size profiles:
+
+- `output="summary"` returns a short bounded summary and counts.
+- `output="structured"` is the default for large-output tools; it keeps parsed
+  data and omits duplicate raw command text.
+- `output="raw"` keeps raw MI/readelf command payloads where available.
+- Existing `include_raw=true` context arguments are treated like `output="raw"`.
+
 ## Session Management
 
 | Tool | Safety | Main Parameters | Purpose |
@@ -30,27 +38,27 @@ Safety levels:
 | Tool | Safety | Main Parameters | Purpose |
 | --- | --- | --- | --- |
 | `gdb_run` | Execution | `session_id`, `args`, `timeout`, `auto_interrupt` | Run or restart the inferior. |
-| `gdb_run_and_context` | Execution | `session_id`, `args`, `timeout`, `max_frames`, `include_raw` | Run or restart, then return compact location, backtrace, and locals. |
+| `gdb_run_and_context` | Execution | `session_id`, `args`, `timeout`, `max_frames`, `include_raw`, `output` | Run or restart, then return compact location, backtrace, and locals. |
 | `gdb_restart` | Execution | `session_id`, `args`, `timeout`, `auto_interrupt` | Alias for a restart-style `gdb_run`. |
 | `gdb_continue` | Execution | `session_id`, `timeout`, `auto_interrupt` | Continue execution until stop or timeout. |
-| `gdb_continue_and_context` | Execution | `session_id`, `timeout`, `max_frames`, `include_raw` | Continue, then return compact stop or exit context. |
+| `gdb_continue_and_context` | Execution | `session_id`, `timeout`, `max_frames`, `include_raw`, `output` | Continue, then return compact stop or exit context. |
 | `gdb_interrupt` | Execution | `session_id`, `timeout` | Interrupt a running target. |
 | `gdb_signal` | Execution | `session_id`, `signal_name` | Resume with a signal such as `SIGTERM` or `0`. |
 | `gdb_step` | Execution | `session_id`, `instruction` | Step into a line or instruction. |
-| `gdb_step_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw` | Step into, then return compact context. |
+| `gdb_step_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw`, `output` | Step into, then return compact context. |
 | `gdb_next` | Execution | `session_id`, `instruction` | Step over a line or instruction. |
-| `gdb_next_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw` | Step over, then return compact context. |
+| `gdb_next_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw`, `output` | Step over, then return compact context. |
 | `gdb_start_recording` | Mutation | `session_id`, `method`, `timeout` | Enable GDB process recording for reverse debugging. |
 | `gdb_stop_recording` | Mutation | `session_id`, `timeout` | Stop an active GDB process recording target. |
 | `gdb_record_status` | Read | `session_id` | Return current recording status. |
 | `gdb_reverse_continue` | Execution | `session_id`, `timeout`, `auto_interrupt` | Run backward until the target stops. |
-| `gdb_reverse_continue_and_context` | Execution | `session_id`, `timeout`, `max_frames`, `include_raw` | Run backward, then return compact context. |
+| `gdb_reverse_continue_and_context` | Execution | `session_id`, `timeout`, `max_frames`, `include_raw`, `output` | Run backward, then return compact context. |
 | `gdb_reverse_step` | Execution | `session_id`, `instruction`, `timeout` | Step backward into a line or instruction. |
-| `gdb_reverse_step_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw` | Step backward into, then return compact context. |
+| `gdb_reverse_step_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw`, `output` | Step backward into, then return compact context. |
 | `gdb_reverse_next` | Execution | `session_id`, `instruction`, `timeout` | Step backward over a line or instruction. |
-| `gdb_reverse_next_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw` | Step backward over, then return compact context. |
+| `gdb_reverse_next_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw`, `output` | Step backward over, then return compact context. |
 | `gdb_reverse_finish` | Execution | `session_id`, `timeout` | Run backward to the call site of the selected frame. |
-| `gdb_reverse_finish_and_context` | Execution | `session_id`, `timeout`, `max_frames`, `include_raw` | Run backward to the caller, then return compact context. |
+| `gdb_reverse_finish_and_context` | Execution | `session_id`, `timeout`, `max_frames`, `include_raw`, `output` | Run backward to the caller, then return compact context. |
 | `gdb_detach` | Execution | `session_id` | Detach from the current target. |
 | `gdb_kill` | Execution | `session_id` | Kill the current inferior. |
 
@@ -73,19 +81,19 @@ Safety levels:
 | --- | --- | --- | --- |
 | `gdb_threads` | Read | `session_id` | List threads. |
 | `gdb_select_thread` | Mutation | `session_id`, `thread_id` | Select a thread. |
-| `gdb_backtrace` | Read | `session_id`, `max_frames` | List stack frames. |
-| `gdb_thread_apply_all_backtrace` | Read | `session_id`, `max_frames` | Backtrace every thread. |
+| `gdb_backtrace` | Read | `session_id`, `max_frames`, `output` | List stack frames. |
+| `gdb_thread_apply_all_backtrace` | Read | `session_id`, `max_frames`, `output` | Backtrace every thread. |
 | `gdb_select_frame` | Mutation | `session_id`, `frame` | Select a stack frame. |
-| `gdb_locals` | Read | `session_id` | List locals in the selected frame. |
-| `gdb_stack_arguments` | Read | `session_id`, `max_frames` | List stack frame arguments. |
-| `gdb_frame_variables` | Read | `session_id`, `mode` | List `locals`, `args`, or `all` variables. |
+| `gdb_locals` | Read | `session_id`, `output` | List locals in the selected frame. |
+| `gdb_stack_arguments` | Read | `session_id`, `max_frames`, `output` | List stack frame arguments. |
+| `gdb_frame_variables` | Read | `session_id`, `mode`, `output` | List `locals`, `args`, or `all` variables. |
 
 ## Inspection
 
 | Tool | Safety | Main Parameters | Purpose |
 | --- | --- | --- | --- |
 | `gdb_current_location` | Read | `session_id` | Return selected frame and last stop information. |
-| `gdb_context` | Read | `session_id`, `max_frames`, `include_raw` | Return compact current location, backtrace, locals, and a summary. |
+| `gdb_context` | Read | `session_id`, `max_frames`, `include_raw`, `output` | Return compact current location, backtrace, locals, and a summary. |
 | `gdb_eval_expression` | Read | `session_id`, `expression` | Evaluate a safe expression. Rejects calls and mutations. |
 | `gdb_print` | Read | `session_id`, `expression` | Print a safe expression using GDB formatting. |
 | `gdb_call_function` | Unsafe | `session_id`, `expression` | Call an inferior function or evaluate unsafe expression. |
@@ -99,19 +107,19 @@ Safety levels:
 | `gdb_registers` | Read | `session_id`, `register_numbers`, `fmt` | Read registers. |
 | `gdb_register_names` | Read | `session_id`, `register_numbers` | List register names known to GDB. |
 | `gdb_read_register` | Read | `session_id`, `register` | Read one named register such as `rax`, `pc`, or `$rip`. |
-| `gdb_read_memory` | Read | `session_id`, `address`, `count` | Read raw memory bytes. |
+| `gdb_read_memory` | Read | `session_id`, `address`, `count`, `output` | Read raw memory bytes. |
 | `gdb_write_memory` | Unsafe | `session_id`, `address`, `data_hex` | Write raw memory bytes. |
-| `gdb_search_memory` | Read | `session_id`, `start_address`, `length`, `pattern` | Search memory with GDB `find`. |
-| `gdb_read_c_string` | Read | `session_id`, `address`, `max_bytes` | Read a NUL-terminated string. |
-| `gdb_telescope` | Read | `session_id`, `address`, `count`, `pointer_size`, `max_depth` | Read pointer-sized slots and annotate pointer chains with mapping metadata. |
+| `gdb_search_memory` | Read | `session_id`, `start_address`, `length`, `pattern`, `output` | Search memory with GDB `find`. |
+| `gdb_read_c_string` | Read | `session_id`, `address`, `max_bytes`, `output` | Read a NUL-terminated string. |
+| `gdb_telescope` | Read | `session_id`, `address`, `count`, `pointer_size`, `max_depth`, `output` | Read pointer-sized slots and annotate pointer chains with mapping metadata. |
 | `gdb_shared_libraries` | Read | `session_id` | List shared libraries known to GDB. |
 | `gdb_info_files` | Read | `session_id` | Return `info files`. |
-| `gdb_memory_mappings` | Read | `session_id` | Return Linux process mappings when available. |
-| `gdb_vmmap_structured` | Read | `session_id`, `address`, `module`, `executable`, `writable` | Return parsed mappings with address/module/permission filters and optional gaps. |
+| `gdb_memory_mappings` | Read | `session_id`, `output` | Return Linux process mappings when available. |
+| `gdb_vmmap_structured` | Read | `session_id`, `address`, `module`, `executable`, `writable`, `output` | Return parsed mappings with address/module/permission filters and optional gaps. |
 | `gdb_address_info` | Read | `session_id`, `expression`, `read_string` | Resolve an address to its mapping, module offsets, nearest symbol, and optional C string. |
 | `gdb_piebase` | Read | `session_id`, `offset`, `module` | Calculate a runtime VA from a PIE/module base plus offset. |
-| `gdb_checksec` | Read | `session_id`, `file_path` | Return ELF hardening settings such as PIE, NX, RELRO, canary, Build-ID, IBT, and SHSTK. |
-| `gdb_elf_info` | Read | `session_id`, `file_path`, `include_raw` | Return ELF header, section, security, and Build-ID metadata. |
+| `gdb_checksec` | Read | `session_id`, `file_path`, `output` | Return ELF hardening settings such as PIE, NX, RELRO, canary, Build-ID, IBT, and SHSTK. |
+| `gdb_elf_info` | Read | `session_id`, `file_path`, `include_raw`, `output` | Return ELF header, section, security, and Build-ID metadata. |
 
 ## Binary Analysis Context
 
@@ -121,11 +129,11 @@ and module-offset oriented.
 
 | Tool | Safety | Main Parameters | Purpose |
 | --- | --- | --- | --- |
-| `gdb_pwn_context` | Read | `session_id`, `max_frames`, `telescope_count`, `nearpc_lines` | Return a pwndbg-style context with location, backtrace, registers, `$pc/$sp`, near-PC disassembly, stack telescope, and vmmap. |
-| `gdb_binary_summary` | Read | `session_id`, `file_path` | Return a pwn-oriented binary summary with checksec, ELF metadata, runtime base, entry context, and mapping summary. |
+| `gdb_pwn_context` | Read | `session_id`, `max_frames`, `telescope_count`, `nearpc_lines`, `output` | Return a pwndbg-style context with location, backtrace, registers, `$pc/$sp`, near-PC disassembly, stack telescope, and vmmap. |
+| `gdb_binary_summary` | Read | `session_id`, `file_path`, `output` | Return a pwn-oriented binary summary with checksec, ELF metadata, runtime base, entry context, and mapping summary. |
 | `gdb_register_context` | Read | `session_id` | Return grouped registers for quick instruction pointer, stack pointer, argument, return, and general-purpose inspection. |
-| `gdb_symbols` | Read | `session_id`, `query`, `kind`, `limit` | Search GDB-known functions or variables and return parsed symbol rows. |
-| `gdb_got` | Read | `session_id`, `file_path`, `query`, `module` | List dynamic relocation/GOT entries from `readelf -r` and annotate runtime VAs when a session is available. |
+| `gdb_symbols` | Read | `session_id`, `query`, `kind`, `limit`, `output` | Search GDB-known functions or variables and return parsed symbol rows. |
+| `gdb_got` | Read | `session_id`, `file_path`, `query`, `module`, `output` | List dynamic relocation/GOT entries from `readelf -r` and annotate runtime VAs when a session is available. |
 | `gdb_rva_info` | Read | `session_id`, `offset`, `module`, `read_string` | Resolve a module RVA to a runtime address and annotate it with mapping, symbol, and optional string context. |
 | `gdb_break_rva` | Mutation | `session_id`, `offset`, `module`, `temporary`, `hardware` | Set a breakpoint at module PIE base plus an RVA-style offset. |
 

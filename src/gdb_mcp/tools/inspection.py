@@ -9,6 +9,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from ..analysis import read_memory_contents as _read_memory_contents
 from ..analysis import source_context as _source_context
 from .execution import (
     gdb_continue,
@@ -32,16 +33,20 @@ from .shared import (
     _mi_eval_expression_command,
     _mi_read_memory_bytes_command,
     _mi_write_memory_bytes_command,
+    _profile_command_payload,
     _register_number_suffix,
     _require_cli_target,
     _require_hex_bytes,
     _require_max_frames,
+    _require_output_profile,
     _require_positive_decimal_id,
     _require_read_expression,
     _require_register_name,
     _require_single_line,
     _require_unsafe_tool,
     _result,
+    _stack_from_backtrace,
+    _variables_from_locals,
     manager,
 )
 
@@ -102,19 +107,23 @@ async def _collect_context(
     execution: dict[str, Any] | None = None,
     max_frames: int = 10,
     include_raw: bool = False,
+    output: str = "structured",
 ) -> dict[str, Any]:
     _require_max_frames(max_frames)
+    profile = "raw" if include_raw else _require_output_profile(output)
     if execution is not None and not _execution_has_frame(execution):
         return _execution_only_payload(
             action=action,
             execution=execution,
             include_raw=include_raw,
+            output=output,
         )
 
+    child_output = "raw" if profile == "raw" else "structured"
     location, backtrace, locals_result = await asyncio.gather(
         gdb_current_location(session_id),
-        gdb_backtrace(session_id, max_frames=max_frames),
-        gdb_locals(session_id),
+        gdb_backtrace(session_id, max_frames=max_frames, output=child_output),
+        gdb_locals(session_id, output=child_output),
     )
     return _compact_payload(
         action=action,
@@ -123,6 +132,7 @@ async def _collect_context(
         backtrace=backtrace,
         locals_result=locals_result,
         include_raw=include_raw,
+        output=output,
     )
 
 
@@ -150,17 +160,28 @@ async def gdb_select_thread(session_id: str, thread_id: str) -> dict[str, Any]:
         return _error(exc)
 
 
-async def gdb_backtrace(session_id: str, max_frames: int = 50) -> dict[str, Any]:
+async def gdb_backtrace(
+    session_id: str,
+    max_frames: int = 50,
+    output: str = "structured",
+) -> dict[str, Any]:
     """Get stack frames."""
 
     try:
         if not 1 <= max_frames <= 1_000:
             raise ValueError("max_frames must be between 1 and 1000")
+        _require_output_profile(output)
         high = max_frames - 1
         session = await manager.get(session_id)
-        return _result(
+        payload = _result(
             session,
             await session.execute(f"-stack-list-frames 0 {high}", timeout=10.0),
+        )
+        stack = _stack_from_backtrace(payload)
+        return _profile_command_payload(
+            payload,
+            output,
+            summary_fields={"frame_count": len(stack), "frames": stack[:5]},
         )
     except Exception as exc:
         return _error(exc)
@@ -181,17 +202,24 @@ async def gdb_select_frame(session_id: str, frame: int) -> dict[str, Any]:
         return _error(exc)
 
 
-async def gdb_locals(session_id: str) -> dict[str, Any]:
+async def gdb_locals(session_id: str, output: str = "structured") -> dict[str, Any]:
     """List local variables in the selected frame."""
 
     try:
+        _require_output_profile(output)
         session = await manager.get(session_id)
-        return _result(
+        payload = _result(
             session,
             await session.execute(
                 "-stack-list-variables --simple-values",
                 timeout=10.0,
             ),
+        )
+        variables = _variables_from_locals(payload)
+        return _profile_command_payload(
+            payload,
+            output,
+            summary_fields={"variable_count": len(variables), "variables": variables[:20]},
         )
     except Exception as exc:
         return _error(exc)
@@ -341,6 +369,7 @@ async def gdb_context(
     session_id: str,
     max_frames: int = 10,
     include_raw: bool = False,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Return a compact current location, backtrace, and locals summary."""
 
@@ -350,6 +379,7 @@ async def gdb_context(
             action="context",
             max_frames=max_frames,
             include_raw=include_raw,
+            output=output,
         )
     except Exception as exc:
         return _error(exc)
@@ -362,6 +392,7 @@ async def gdb_run_and_context(
     auto_interrupt: bool = True,
     max_frames: int = 10,
     include_raw: bool = False,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Run or restart the inferior, then return a compact stop context."""
 
@@ -379,6 +410,7 @@ async def gdb_run_and_context(
             execution=execution,
             max_frames=max_frames,
             include_raw=include_raw,
+            output=output,
         )
     except Exception as exc:
         return _error(exc)
@@ -390,6 +422,7 @@ async def gdb_continue_and_context(
     auto_interrupt: bool = True,
     max_frames: int = 10,
     include_raw: bool = False,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Continue execution, then return a compact stop or exit summary."""
 
@@ -406,6 +439,7 @@ async def gdb_continue_and_context(
             execution=execution,
             max_frames=max_frames,
             include_raw=include_raw,
+            output=output,
         )
     except Exception as exc:
         return _error(exc)
@@ -417,6 +451,7 @@ async def gdb_step_and_context(
     timeout: float = 15.0,
     max_frames: int = 10,
     include_raw: bool = False,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Step into one source line or instruction, then return compact context."""
 
@@ -433,6 +468,7 @@ async def gdb_step_and_context(
             execution=execution,
             max_frames=max_frames,
             include_raw=include_raw,
+            output=output,
         )
     except Exception as exc:
         return _error(exc)
@@ -444,6 +480,7 @@ async def gdb_next_and_context(
     timeout: float = 15.0,
     max_frames: int = 10,
     include_raw: bool = False,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Step over one source line or instruction, then return compact context."""
 
@@ -460,6 +497,7 @@ async def gdb_next_and_context(
             execution=execution,
             max_frames=max_frames,
             include_raw=include_raw,
+            output=output,
         )
     except Exception as exc:
         return _error(exc)
@@ -471,6 +509,7 @@ async def gdb_reverse_continue_and_context(
     auto_interrupt: bool = True,
     max_frames: int = 10,
     include_raw: bool = False,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Run backward, then return a compact stop or exit summary."""
 
@@ -487,6 +526,7 @@ async def gdb_reverse_continue_and_context(
             execution=execution,
             max_frames=max_frames,
             include_raw=include_raw,
+            output=output,
         )
     except Exception as exc:
         return _error(exc)
@@ -498,6 +538,7 @@ async def gdb_reverse_step_and_context(
     timeout: float = 15.0,
     max_frames: int = 10,
     include_raw: bool = False,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Step backward into one line or instruction, then return compact context."""
 
@@ -514,6 +555,7 @@ async def gdb_reverse_step_and_context(
             execution=execution,
             max_frames=max_frames,
             include_raw=include_raw,
+            output=output,
         )
     except Exception as exc:
         return _error(exc)
@@ -525,6 +567,7 @@ async def gdb_reverse_next_and_context(
     timeout: float = 15.0,
     max_frames: int = 10,
     include_raw: bool = False,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Step backward over one line or instruction, then return compact context."""
 
@@ -541,6 +584,7 @@ async def gdb_reverse_next_and_context(
             execution=execution,
             max_frames=max_frames,
             include_raw=include_raw,
+            output=output,
         )
     except Exception as exc:
         return _error(exc)
@@ -551,6 +595,7 @@ async def gdb_reverse_finish_and_context(
     timeout: float = 15.0,
     max_frames: int = 10,
     include_raw: bool = False,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Run backward to the caller, then return compact context."""
 
@@ -563,6 +608,7 @@ async def gdb_reverse_finish_and_context(
             execution=execution,
             max_frames=max_frames,
             include_raw=include_raw,
+            output=output,
         )
     except Exception as exc:
         return _error(exc)
@@ -673,47 +719,61 @@ async def gdb_source(
 async def gdb_thread_apply_all_backtrace(
     session_id: str,
     max_frames: int = 50,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Run backtrace on every thread."""
 
     try:
         if not 1 <= max_frames <= 1_000:
             raise ValueError("max_frames must be between 1 and 1000")
+        _require_output_profile(output)
         session = await manager.get(session_id)
-        return _result(
+        payload = _result(
             session,
             await session.execute(
                 f"thread apply all backtrace {max_frames}",
                 timeout=15.0,
             ),
         )
+        return _profile_command_payload(payload, output)
     except Exception as exc:
         return _error(exc)
 
 
-async def gdb_stack_arguments(session_id: str, max_frames: int = 50) -> dict[str, Any]:
+async def gdb_stack_arguments(
+    session_id: str,
+    max_frames: int = 50,
+    output: str = "structured",
+) -> dict[str, Any]:
     """List stack frame arguments."""
 
     try:
         if not 1 <= max_frames <= 1_000:
             raise ValueError("max_frames must be between 1 and 1000")
+        _require_output_profile(output)
         high = max_frames - 1
         session = await manager.get(session_id)
-        return _result(
+        payload = _result(
             session,
             await session.execute(
                 f"-stack-list-arguments --simple-values 0 {high}",
                 timeout=10.0,
             ),
         )
+        return _profile_command_payload(payload, output)
     except Exception as exc:
         return _error(exc)
 
 
-async def gdb_frame_variables(session_id: str, mode: str = "locals") -> dict[str, Any]:
+async def gdb_frame_variables(
+    session_id: str,
+    mode: str = "locals",
+    output: str = "structured",
+) -> dict[str, Any]:
     """List variables for the selected frame. mode is locals, args, or all."""
 
     try:
+        _require_output_profile(output)
         commands = {
             "locals": "-stack-list-locals --simple-values",
             "args": "-stack-list-arguments --simple-values 0 0",
@@ -723,7 +783,13 @@ async def gdb_frame_variables(session_id: str, mode: str = "locals") -> dict[str
         if command is None:
             raise ValueError("mode must be one of: locals, args, all")
         session = await manager.get(session_id)
-        return _result(session, await session.execute(command, timeout=10.0))
+        payload = _result(session, await session.execute(command, timeout=10.0))
+        variables = _variables_from_locals(payload)
+        return _profile_command_payload(
+            payload,
+            output,
+            summary_fields={"mode": mode, "variable_count": len(variables)},
+        )
     except Exception as exc:
         return _error(exc)
 
@@ -800,6 +866,7 @@ async def gdb_read_memory(
     session_id: str,
     address: str,
     count: int,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Read raw memory bytes."""
 
@@ -807,13 +874,24 @@ async def gdb_read_memory(
         _require_read_expression("address", address)
         if not 1 <= count <= 1_048_576:
             raise ValueError("count must be between 1 and 1048576 bytes")
+        _require_output_profile(output)
         session = await manager.get(session_id)
-        return _result(
+        payload = _result(
             session,
             await session.execute(
                 _mi_read_memory_bytes_command(address, count),
                 timeout=10.0,
             ),
+        )
+        byte_count = len(_read_memory_contents(payload))
+        return _profile_command_payload(
+            payload,
+            output,
+            summary_fields={
+                "address": address,
+                "requested_byte_count": count,
+                "returned_byte_count": byte_count,
+            },
         )
     except Exception as exc:
         return _error(exc)
@@ -847,6 +925,7 @@ async def gdb_search_memory(
     start_address: str,
     length: int,
     pattern: str,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Search memory for a GDB find pattern."""
 
@@ -857,14 +936,16 @@ async def gdb_search_memory(
             raise ValueError("length must be between 1 and 1048576 bytes")
         if not pattern.strip():
             raise ValueError("pattern must not be empty")
+        _require_output_profile(output)
         session = await manager.get(session_id)
-        return _result(
+        payload = _result(
             session,
             await session.execute(
                 _cli_find_command(start_address, length, pattern),
                 timeout=10.0,
             ),
         )
+        return _profile_command_payload(payload, output)
     except Exception as exc:
         return _error(exc)
 
@@ -873,6 +954,7 @@ async def gdb_read_c_string(
     session_id: str,
     address: str,
     max_bytes: int = 4096,
+    output: str = "structured",
 ) -> dict[str, Any]:
     """Read a NUL-terminated C string from memory."""
 
@@ -880,6 +962,7 @@ async def gdb_read_c_string(
         _require_read_expression("address", address)
         if not 1 <= max_bytes <= 1_048_576:
             raise ValueError("max_bytes must be between 1 and 1048576")
+        _require_output_profile(output)
         session = await manager.get(session_id)
         result = await session.execute(
             _mi_read_memory_bytes_command(address, max_bytes),
@@ -894,7 +977,15 @@ async def gdb_read_c_string(
                 contents = str(memory[0].get("contents", ""))
             data = bytes.fromhex(contents) if contents else b""
             string_value = data.split(b"\0", 1)[0].decode(errors="replace")
-        return {**payload, "string": string_value}
+        return _profile_command_payload(
+            {**payload, "string": string_value},
+            output,
+            summary_fields={
+                "address": address,
+                "max_bytes": max_bytes,
+                "string": string_value,
+            },
+        )
     except Exception as exc:
         return _error(exc)
 
@@ -922,11 +1013,16 @@ async def gdb_info_files(session_id: str) -> dict[str, Any]:
         return _error(exc)
 
 
-async def gdb_memory_mappings(session_id: str) -> dict[str, Any]:
+async def gdb_memory_mappings(
+    session_id: str,
+    output: str = "structured",
+) -> dict[str, Any]:
     """Return process memory mappings when supported by the target."""
 
     try:
+        _require_output_profile(output)
         session = await manager.get(session_id)
-        return _result(session, await session.execute("info proc mappings", timeout=10.0))
+        payload = _result(session, await session.execute("info proc mappings", timeout=10.0))
+        return _profile_command_payload(payload, output)
     except Exception as exc:
         return _error(exc)

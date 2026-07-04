@@ -12,6 +12,7 @@ from ..session import CommandResult, GdbMcpError, GdbSession, SessionManager
 
 _manager: SessionManager | None = None
 _runtime_config: ServerConfig | None = None
+_OUTPUT_PROFILES = {"summary", "structured", "raw"}
 
 
 def configure(*, manager: SessionManager, runtime_config: ServerConfig) -> None:
@@ -57,6 +58,12 @@ def _error(exc: Exception) -> dict[str, Any]:
 
 def _result(session: GdbSession, result: CommandResult) -> dict[str, Any]:
     return command_response(session, result)
+
+
+def _require_output_profile(output: str) -> str:
+    if output not in _OUTPUT_PROFILES:
+        raise ValueError("output must be one of: summary, structured, raw")
+    return output
 
 
 def _mi_eval_expression_command(expression: str) -> str:
@@ -172,6 +179,76 @@ def _target_output(payload: dict[str, Any]) -> str:
     return output if isinstance(output, str) else ""
 
 
+def _first_text_line(value: Any, limit: int = 500) -> str:
+    if not isinstance(value, str):
+        return ""
+    line = next((item.strip() for item in value.splitlines() if item.strip()), "")
+    if len(line) <= limit:
+        return line
+    return line[: max(0, limit - 17)] + "... truncated"
+
+
+def _command_summary(payload: dict[str, Any]) -> str:
+    lines: list[str] = []
+    command = payload.get("command")
+    if isinstance(command, str) and command:
+        lines.append(f"command: {command}")
+    result_class = payload.get("result_class")
+    if isinstance(result_class, str) and result_class:
+        lines.append(f"result: {result_class}")
+    if payload.get("timed_out"):
+        lines.append("timed_out: true")
+    if payload.get("interrupted"):
+        lines.append("interrupted: true")
+    error = payload.get("error")
+    if isinstance(error, str) and error:
+        lines.append(f"error: {error}")
+    output = _first_text_line(_target_output(payload))
+    if output:
+        lines.append(f"output: {output}")
+    if payload.get("truncated"):
+        lines.append("truncated: true")
+    return "\n".join(lines)
+
+
+def _profile_command_payload(
+    payload: dict[str, Any],
+    output: str,
+    *,
+    summary: str | None = None,
+    summary_fields: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    profile = _require_output_profile(output)
+    if profile == "raw":
+        return {**payload, "output_profile": "raw"}
+    if profile == "structured":
+        structured = {**payload, "output_profile": "structured"}
+        structured.pop("raw", None)
+        return structured
+
+    keys = (
+        "ok",
+        "session_id",
+        "command",
+        "result_class",
+        "timed_out",
+        "interrupted",
+        "error",
+        "truncated",
+        "output_limit_chars",
+    )
+    summary_payload = {
+        key: payload[key]
+        for key in keys
+        if key in payload
+    }
+    summary_payload["output_profile"] = "summary"
+    summary_payload["summary"] = summary if summary is not None else _command_summary(payload)
+    if summary_fields:
+        summary_payload.update(summary_fields)
+    return summary_payload
+
+
 def _summary_lines(
     *,
     action: str,
@@ -235,7 +312,9 @@ def _compact_payload(
     backtrace: dict[str, Any],
     locals_result: dict[str, Any],
     include_raw: bool,
+    output: str = "structured",
 ) -> dict[str, Any]:
+    profile = "raw" if include_raw else _require_output_profile(output)
     stack = _stack_from_backtrace(backtrace)
     variables = _variables_from_locals(locals_result)
     frame = _frame_from_location(location)
@@ -272,7 +351,25 @@ def _compact_payload(
                 "truncated",
             )
         }
-    if include_raw:
+    payload["output_profile"] = "structured"
+    if profile == "summary":
+        summary_payload: dict[str, Any] = {
+            "ok": payload["ok"],
+            "action": action,
+            "output_profile": "summary",
+            "summary": payload["summary"],
+            "stop_reason": payload["stop_reason"],
+            "location": frame,
+            "frame_count": len(stack),
+            "local_count": len(variables),
+        }
+        if execution is not None:
+            summary_payload["output"] = payload.get("output", "")
+            summary_payload["execution"] = payload.get("execution")
+        return summary_payload
+
+    if profile == "raw":
+        payload["output_profile"] = "raw"
         payload["raw"] = {
             "execution": execution,
             "location": location,
@@ -297,7 +394,9 @@ def _execution_only_payload(
     action: str,
     execution: dict[str, Any],
     include_raw: bool,
+    output: str = "structured",
 ) -> dict[str, Any]:
+    profile = "raw" if include_raw else _require_output_profile(output)
     payload: dict[str, Any] = {
         "ok": bool(execution.get("ok")),
         "action": action,
@@ -329,7 +428,22 @@ def _execution_only_payload(
             )
         },
     }
-    if include_raw:
+    payload["output_profile"] = "structured"
+    if profile == "summary":
+        return {
+            "ok": payload["ok"],
+            "action": action,
+            "output_profile": "summary",
+            "summary": payload["summary"],
+            "stop_reason": payload["stop_reason"],
+            "location": None,
+            "frame_count": 0,
+            "local_count": 0,
+            "output": payload["output"],
+            "execution": payload["execution"],
+        }
+    if profile == "raw":
+        payload["output_profile"] = "raw"
         payload["raw"] = {"execution": execution}
     return payload
 
