@@ -1,5 +1,6 @@
 import ast
 import asyncio
+import json
 import re
 import tempfile
 import unittest
@@ -581,6 +582,26 @@ class ServerContractTests(unittest.TestCase):
         self.assertLessEqual(len(result["stdout"]), result["output_limit_chars"])
         self.assertLessEqual(len(result["stderr"]), result["output_limit_chars"])
         self.assertIn("truncated", result["stdout"])
+
+    def test_readelf_separates_options_from_file_path(self) -> None:
+        asyncio.run(self._test_readelf_separates_options_from_file_path())
+
+    async def _test_readelf_separates_options_from_file_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_readelf = Path(tmp) / "readelf"
+            fake_readelf.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json\n"
+                "import sys\n"
+                "print(json.dumps(sys.argv[1:]))\n",
+                encoding="utf-8",
+            )
+            fake_readelf.chmod(0o755)
+            with patch("gdb_mcp.server.shutil.which", return_value=str(fake_readelf)):
+                result = await _run_readelf("-dash-file", ["-h"], timeout=1.0)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(json.loads(result["stdout"]), ["-W", "-h", "--", "-dash-file"])
 
     def test_context_rejects_invalid_frame_count(self) -> None:
         result = asyncio.run(gdb_context("missing", max_frames=0))

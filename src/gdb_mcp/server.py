@@ -2565,6 +2565,7 @@ async def _run_readelf(file_path: str, args: list[str], timeout: float) -> dict[
         readelf,
         "-W",
         *args,
+        "--",
         file_path,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
