@@ -594,6 +594,20 @@ class GdbSession:
                 process.stdin.write(f"{token}{command}\n".encode())
                 await process.stdin.drain()
             return await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
+        except asyncio.CancelledError:
+            self._pending.pop(token, None)
+            future.cancel()
+            self._finish_command_history(
+                pending,
+                status="cancelled",
+                error="Command task cancelled",
+            )
+            if wait_for_stop and pending.saw_running and self.is_alive():
+                try:
+                    await self.interrupt(timeout=1.0)
+                except Exception:
+                    pass
+            raise
         except asyncio.TimeoutError:
             self._pending.pop(token, None)
             future.cancel()
