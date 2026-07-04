@@ -7,9 +7,7 @@ import asyncio
 import os
 import re
 import shutil
-import time
 from contextlib import asynccontextmanager
-from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -24,9 +22,23 @@ from .session import (
     GdbSession,
     SessionManager,
     _truncate_text,
-    gdbserver_target_endpoint,
-    launch_gdbserver,
 )
+from .tools import diagnostics as _diagnostics_tools
+from .tools import session_lifecycle as _session_lifecycle_tools
+
+gdb_capabilities = _diagnostics_tools.gdb_capabilities
+gdb_close_idle_sessions = _diagnostics_tools.gdb_close_idle_sessions
+gdb_command_reference = _diagnostics_tools.gdb_command_reference
+gdb_recent_commands = _diagnostics_tools.gdb_recent_commands
+gdb_recent_events = _diagnostics_tools.gdb_recent_events
+gdb_server_health = _diagnostics_tools.gdb_server_health
+gdb_session_diagnostics = _diagnostics_tools.gdb_session_diagnostics
+gdb_close_session = _session_lifecycle_tools.gdb_close_session
+gdb_connect_gdbserver = _session_lifecycle_tools.gdb_connect_gdbserver
+gdb_create_session = _session_lifecycle_tools.gdb_create_session
+gdb_launch_gdbserver = _session_lifecycle_tools.gdb_launch_gdbserver
+gdb_list_sessions = _session_lifecycle_tools.gdb_list_sessions
+gdb_status = _session_lifecycle_tools.gdb_status
 
 _BUILD_ID_RE = _analysis.BUILD_ID_RE
 _address_in_mapping = _analysis.address_in_mapping
@@ -512,188 +524,18 @@ def _require_register_name(register: str) -> str:
     return normalized if normalized.startswith("$") else f"${normalized}"
 
 
-async def _terminate_process(process: asyncio.subprocess.Process | None) -> None:
-    if process is None or process.returncode is not None:
-        return
-    process.terminate()
-    try:
-        await asyncio.wait_for(process.wait(), timeout=2.0)
-    except asyncio.TimeoutError:
-        process.kill()
-        await process.wait()
-
-
-@mcp.tool(annotations=SESSION_MUTATION)
-async def gdb_create_session(
-    program: str | None = None,
-    args: list[str] | None = None,
-    cwd: str | None = None,
-    gdb_path: str = "gdb",
-    startup_timeout: float = 10.0,
-) -> dict[str, Any]:
-    """Create an isolated GDB session and optionally load a program."""
-
-    try:
-        session = await manager.create(
-            gdb_path=gdb_path,
-            program=program,
-            args=args,
-            cwd=cwd,
-            startup_timeout=startup_timeout,
-        )
-        return {"ok": True, "session": session.describe()}
-    except Exception as exc:
-        return _error(exc)
-
-
-@mcp.tool(annotations=SESSION_MUTATION)
-async def gdb_connect_gdbserver(
-    endpoint: str,
-    session_id: str | None = None,
-    program: str | None = None,
-    cwd: str | None = None,
-    gdb_path: str = "gdb",
-    extended: bool = True,
-    sysroot: str | None = None,
-    solib_search_path: str | None = None,
-    timeout: float = 15.0,
-) -> dict[str, Any]:
-    """Connect a session to an existing gdbserver endpoint."""
-
-    created_session = False
-    session: GdbSession | None = None
-    async def close_created_session() -> None:
-        if created_session and session is not None:
-            try:
-                await manager.close(session.session_id)
-            except Exception:
-                await session.close()
-
-    try:
-        _require_mi_word("endpoint", endpoint)
-        if session_id:
-            session = await manager.get(session_id)
-        else:
-            session = await manager.create(
-                gdb_path=gdb_path,
-                program=program,
-                cwd=cwd,
-                startup_timeout=timeout,
-            )
-            created_session = True
-        result = await session.connect_gdbserver(
-            endpoint,
-            extended=extended,
-            timeout=timeout,
-            sysroot=sysroot,
-            solib_search_path=solib_search_path,
-        )
-        if not result["ok"] and created_session:
-            await manager.close(session.session_id)
-            return {
-                "ok": False,
-                "error": "Failed to connect to gdbserver; the new session was closed",
-                "command": result,
-            }
-        return {"ok": result["ok"], "session": session.describe(), "command": result}
-    except asyncio.CancelledError:
-        await close_created_session()
-        raise
-    except Exception as exc:
-        await close_created_session()
-        return _error(exc)
-
-
-@mcp.tool(annotations=TARGET_EXECUTION)
-async def gdb_launch_gdbserver(
-    program: str,
-    listen: str = "localhost:2345",
-    target_endpoint: str | None = None,
-    args: list[str] | None = None,
-    cwd: str | None = None,
-    gdb_path: str = "gdb",
-    gdbserver_path: str = "gdbserver",
-    extended: bool = False,
-    timeout: float = 15.0,
-) -> dict[str, Any]:
-    """Launch a local gdbserver and connect a new GDB session to it."""
-
-    gdbserver_process: asyncio.subprocess.Process | None = None
-    session: GdbSession | None = None
-    try:
-        gdbserver_process, banner, drain_task = await launch_gdbserver(
-            program=program,
-            listen=listen,
-            args=args,
-            cwd=cwd,
-            gdbserver_path=gdbserver_path,
-            startup_timeout=min(timeout, 5.0),
-        )
-        session = await manager.create(
-            gdb_path=gdb_path,
-            program=program,
-            cwd=cwd,
-            startup_timeout=timeout,
-        )
-        session.gdbserver_process = gdbserver_process
-        session.gdbserver_drain_task = drain_task
-        target = target_endpoint or gdbserver_target_endpoint(listen, banner)
-        result = await session.connect_gdbserver(
-            target,
-            extended=extended,
-            timeout=timeout,
-        )
-        if not result["ok"]:
-            await manager.close(session.session_id)
-            return {
-                "ok": False,
-                "error": "Launched gdbserver but GDB could not connect; both were closed",
-                "gdbserver_output": banner.strip(),
-                "command": result,
-            }
-        return {
-            "ok": result["ok"],
-            "session": session.describe(),
-            "gdbserver_output": banner.strip(),
-            "command": result,
-        }
-    except Exception as exc:
-        if session is not None:
-            try:
-                await manager.close(session.session_id)
-            except Exception:
-                await session.close()
-        else:
-            await _terminate_process(gdbserver_process)
-        return _error(exc)
-
-
-@mcp.tool(annotations=READ_ONLY)
-async def gdb_list_sessions() -> dict[str, Any]:
-    """List active GDB sessions."""
-
-    return {"ok": True, "sessions": await manager.list()}
-
-
-@mcp.tool(annotations=READ_ONLY)
-async def gdb_status(session_id: str) -> dict[str, Any]:
-    """Return one session's status."""
-
-    try:
-        session = await manager.get(session_id)
-        return {"ok": True, "session": session.describe()}
-    except Exception as exc:
-        return _error(exc)
-
-
-@mcp.tool(annotations=DESTRUCTIVE)
-async def gdb_close_session(session_id: str) -> dict[str, Any]:
-    """Close a GDB session and any child gdbserver process."""
-
-    try:
-        return {"ok": True, **await manager.close(session_id)}
-    except Exception as exc:
-        return _error(exc)
+_session_lifecycle_tools.configure(
+    manager=manager,
+    error=_error,
+    require_mi_word=_require_mi_word,
+)
+_session_lifecycle_tools.register_tools(
+    mcp,
+    read_only=READ_ONLY,
+    session_mutation=SESSION_MUTATION,
+    target_execution=TARGET_EXECUTION,
+    destructive=DESTRUCTIVE,
+)
 
 
 @mcp.tool(annotations=TARGET_EXECUTION)
@@ -3005,334 +2847,17 @@ async def gdb_gdbserver_status(session_id: str) -> dict[str, Any]:
         return _error(exc)
 
 
-@mcp.tool(annotations=READ_ONLY)
-async def gdb_recent_events(
-    session_id: str,
-    limit: int = 100,
-) -> dict[str, Any]:
-    """Return recent MI records, including asynchronous stop and thread events."""
-
-    try:
-        if not 1 <= limit <= 500:
-            raise ValueError("limit must be between 1 and 500")
-        session = await manager.get(session_id)
-        return {
-            "ok": True,
-            "session_id": session_id,
-            "events": session.recent_records(limit),
-        }
-    except Exception as exc:
-        return _error(exc)
-
-
-@mcp.tool(annotations=READ_ONLY)
-async def gdb_recent_commands(
-    session_id: str,
-    limit: int = 100,
-) -> dict[str, Any]:
-    """Return recent commands sent to GDB for one session."""
-
-    try:
-        if not 1 <= limit <= 200:
-            raise ValueError("limit must be between 1 and 200")
-        session = await manager.get(session_id)
-        return {
-            "ok": True,
-            "session_id": session_id,
-            "commands": session.recent_commands(limit),
-        }
-    except Exception as exc:
-        return _error(exc)
-
-
-@mcp.tool(annotations=READ_ONLY)
-async def gdb_session_diagnostics(session_id: str) -> dict[str, Any]:
-    """Return diagnostic state for one session."""
-
-    try:
-        session = await manager.get(session_id)
-        return {
-            "ok": True,
-            "session": session.describe(),
-            "recent_commands": session.recent_commands(20),
-            "recent_events": session.recent_records(20),
-        }
-    except Exception as exc:
-        return _error(exc)
-
-
-@mcp.tool(annotations=SESSION_MUTATION)
-async def gdb_close_idle_sessions(max_idle_seconds: float = 3600.0) -> dict[str, Any]:
-    """Close live sessions idle for at least max_idle_seconds."""
-
-    try:
-        if max_idle_seconds < 0:
-            raise ValueError("max_idle_seconds must be non-negative")
-        now = time.time()
-        sessions = await manager.list()
-        closed: list[dict[str, Any]] = []
-        for session in sessions:
-            idle = now - float(session["last_activity_at"])
-            if idle < max_idle_seconds:
-                continue
-            try:
-                result = await manager.close(str(session["session_id"]))
-                closed.append({"session": session, "result": result, "idle_seconds": idle})
-            except Exception as exc:
-                closed.append({"session": session, "error": str(exc), "idle_seconds": idle})
-        return {"ok": True, "closed": closed, "closed_count": len(closed)}
-    except Exception as exc:
-        return _error(exc)
-
-
-@mcp.tool(annotations=READ_ONLY)
-async def gdb_command_reference() -> dict[str, Any]:
-    """Return common safe tool flows and GDB/MI command equivalents."""
-
-    return {
-        "ok": True,
-        "recommended_flow": [
-            "gdb_create_session",
-            "gdb_set_breakpoint",
-            "gdb_run_and_context",
-            "gdb_context",
-            "gdb_pwn_context",
-            "gdb_address_info",
-            "gdb_read_register",
-            "gdb_nearpc",
-            "gdb_telescope",
-            "gdb_continue_and_context",
-            "gdb_close_session",
-        ],
-        "safe_tools": {
-            "breakpoints": ["gdb_set_breakpoint", "gdb_list_breakpoints"],
-            "execution": [
-                "gdb_run_and_context",
-                "gdb_continue_and_context",
-                "gdb_step_and_context",
-                "gdb_next_and_context",
-            ],
-            "state": [
-                "gdb_context",
-                "gdb_backtrace",
-                "gdb_locals",
-                "gdb_read_register",
-                "gdb_register_names",
-                "gdb_register_context",
-                "gdb_read_memory",
-                "gdb_pwn_context",
-                "gdb_address_info",
-                "gdb_telescope",
-                "gdb_vmmap_structured",
-            ],
-            "source": [
-                "gdb_source",
-                "gdb_find_source",
-                "gdb_disassemble",
-                "gdb_disassemble_around_pc",
-                "gdb_nearpc",
-            ],
-            "binary_analysis": [
-                "gdb_pwn_context",
-                "gdb_binary_summary",
-                "gdb_register_context",
-                "gdb_vmmap_structured",
-                "gdb_address_info",
-                "gdb_rva_info",
-                "gdb_telescope",
-                "gdb_nearpc",
-                "gdb_symbols",
-                "gdb_got",
-                "gdb_piebase",
-                "gdb_break_rva",
-                "gdb_checksec",
-                "gdb_elf_info",
-            ],
-        },
-        "common_mi_commands": [
-            {"mi": "-break-insert LOCATION", "tool": "gdb_set_breakpoint"},
-            {"mi": "-break-delete NUM", "tool": "gdb_delete_breakpoint"},
-            {"mi": "-exec-run", "tool": "gdb_run"},
-            {"mi": "-exec-continue", "tool": "gdb_continue"},
-            {"mi": "-exec-step", "tool": "gdb_step"},
-            {"mi": "-exec-next", "tool": "gdb_next"},
-            {"mi": "-stack-list-frames 0 N", "tool": "gdb_backtrace"},
-            {"mi": "-data-evaluate-expression EXPR", "tool": "gdb_eval_expression"},
-            {"mi": "-data-list-register-values FMT", "tool": "gdb_registers"},
-            {"mi": "-data-read-memory-bytes ADDRESS COUNT", "tool": "gdb_read_memory"},
-        ],
-        "unsafe_note": (
-            "Use gdb_execute only with --unsafe or GDB_MCP_ALLOW_UNSAFE=1. "
-            "Prefer dedicated tools when available."
-        ),
-    }
-
-
-@mcp.tool(annotations=READ_ONLY)
-async def gdb_capabilities() -> dict[str, Any]:
-    """Return a workflow-oriented capability index for agent tool selection."""
-
-    return {
-        "ok": True,
-        "design_notes": [
-            {
-                "source": "Ipiano/gdb-mcp",
-                "url": "https://github.com/Ipiano/gdb-mcp",
-                "borrowed": (
-                    "Expose a workflow-oriented reference for sessions, threads, "
-                    "breakpoints, execution, and data inspection."
-                ),
-            },
-            {
-                "source": "signal-slot/mcp-gdb",
-                "url": "https://github.com/signal-slot/mcp-gdb",
-                "borrowed": (
-                    "Keep simple GDB command equivalents visible so agents can map "
-                    "natural debugging requests to dedicated tools."
-                ),
-            },
-            {
-                "source": "maxholman/mcp-gdbmi",
-                "url": "https://github.com/maxholman/mcp-gdbmi",
-                "borrowed": (
-                    "Treat GDB/MI verbosity as an explicit capability concern and "
-                    "steer agents toward compact context tools before raw payloads."
-                ),
-            },
-            {
-                "source": "pansila/mcp_server_gdb",
-                "url": "https://github.com/pansila/mcp_server_gdb",
-                "borrowed": (
-                    "Describe concurrent multi-session debugging as a first-class "
-                    "server capability."
-                ),
-            },
-        ],
-        "session_model": {
-            "multi_session": True,
-            "explicit_session_id_required": True,
-            "max_sessions": runtime_config.max_sessions,
-            "recommended_start": ["gdb_create_session", "gdb_list_sessions"],
-            "recommended_finish": ["gdb_close_session", "gdb_close_idle_sessions"],
-        },
-        "workflows": {
-            "local_program": [
-                "gdb_create_session",
-                "gdb_set_breakpoint",
-                "gdb_run_and_context",
-                "gdb_context",
-            ],
-            "running_process": ["gdb_attach", "gdb_context", "gdb_detach"],
-            "core_dump": ["gdb_load_core", "gdb_threads", "gdb_backtrace", "gdb_context"],
-            "remote_gdbserver": [
-                "gdb_connect_gdbserver",
-                "gdb_set_remote_paths",
-                "gdb_gdbserver_status",
-                "gdb_detach_gdbserver",
-            ],
-            "managed_gdbserver": [
-                "gdb_launch_gdbserver",
-                "gdb_gdbserver_status",
-                "gdb_detach_gdbserver",
-            ],
-            "source_debugging": [
-                "gdb_source",
-                "gdb_find_source",
-                "gdb_backtrace",
-                "gdb_frame_variables",
-            ],
-            "binary_analysis": [
-                "gdb_pwn_context",
-                "gdb_vmmap_structured",
-                "gdb_address_info",
-                "gdb_rva_info",
-                "gdb_nearpc",
-                "gdb_telescope",
-                "gdb_piebase",
-                "gdb_break_rva",
-                "gdb_register_context",
-                "gdb_symbols",
-                "gdb_got",
-                "gdb_binary_summary",
-                "gdb_checksec",
-                "gdb_elf_info",
-            ],
-            "reverse_debugging": [
-                "gdb_start_recording",
-                "gdb_reverse_continue_and_context",
-                "gdb_reverse_step_and_context",
-                "gdb_reverse_next_and_context",
-                "gdb_stop_recording",
-            ],
-            "diagnostics": [
-                "gdb_server_health",
-                "gdb_session_diagnostics",
-                "gdb_recent_commands",
-                "gdb_recent_events",
-                "gdb_command_reference",
-            ],
-        },
-        "output_strategy": {
-            "default_limit_chars": runtime_config.output_limit_chars,
-            "prefer_compact_tools": [
-                "gdb_run_and_context",
-                "gdb_continue_and_context",
-                "gdb_step_and_context",
-                "gdb_next_and_context",
-                "gdb_context",
-                "gdb_pwn_context",
-            ],
-            "raw_payload_escape_hatch": (
-                "Set include_raw=true only when compact fields are insufficient."
-            ),
-            "hex_compaction": "Full hexadecimal strings are normalized to shorter canonical hex.",
-        },
-        "safety": {
-            "unsafe_enabled": runtime_config.allow_unsafe_execute,
-            "unsafe_tools": [
-                "gdb_execute",
-                "gdb_call_function",
-                "gdb_set_variable",
-                "gdb_write_memory",
-                "gdb_breakpoint_commands",
-            ],
-            "safe_expression_tools_reject_calls_and_mutations": True,
-        },
-    }
-
-
-@mcp.tool(annotations=READ_ONLY)
-async def gdb_server_health() -> dict[str, Any]:
-    """Report server capabilities, safety mode, dependencies, and session count."""
-
-    try:
-        package_version = version("gdb-mcp")
-    except PackageNotFoundError:
-        package_version = "0+unknown"
-    gdb_path = shutil.which("gdb")
-    gdbserver_path = shutil.which("gdbserver")
-    gdb_version, gdbserver_version = await asyncio.gather(
-        _executable_version(gdb_path, "--version"),
-        _executable_version(gdbserver_path, "--version"),
-    )
-    sessions = await manager.list()
-    return {
-        "ok": True,
-        "name": "gdb-mcp",
-        "version": package_version,
-        "gdb_available": gdb_path is not None,
-        "gdb_path": gdb_path,
-        "gdb_version": gdb_version,
-        "gdbserver_available": gdbserver_path is not None,
-        "gdbserver_path": gdbserver_path,
-        "gdbserver_version": gdbserver_version,
-        "unsafe_execute_enabled": runtime_config.allow_unsafe_execute,
-        "max_sessions": runtime_config.max_sessions,
-        "output_limit_chars": runtime_config.output_limit_chars,
-        "capability_tool": "gdb_capabilities",
-        "session_count": len(sessions),
-        "sessions": sessions,
-    }
+_diagnostics_tools.configure(
+    manager=manager,
+    runtime_config=runtime_config,
+    error=_error,
+    executable_version=_executable_version,
+)
+_diagnostics_tools.register_tools(
+    mcp,
+    read_only=READ_ONLY,
+    session_mutation=SESSION_MUTATION,
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
