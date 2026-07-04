@@ -562,6 +562,13 @@ async def gdb_connect_gdbserver(
 
     created_session = False
     session: GdbSession | None = None
+    async def close_created_session() -> None:
+        if created_session and session is not None:
+            try:
+                await manager.close(session.session_id)
+            except Exception:
+                await session.close()
+
     try:
         _require_mi_word("endpoint", endpoint)
         if session_id:
@@ -589,12 +596,11 @@ async def gdb_connect_gdbserver(
                 "command": result,
             }
         return {"ok": result["ok"], "session": session.describe(), "command": result}
+    except asyncio.CancelledError:
+        await close_created_session()
+        raise
     except Exception as exc:
-        if created_session and session is not None:
-            try:
-                await manager.close(session.session_id)
-            except Exception:
-                await session.close()
+        await close_created_session()
         return _error(exc)
 
 

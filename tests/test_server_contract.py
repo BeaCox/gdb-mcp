@@ -278,6 +278,32 @@ class ServerContractTests(unittest.TestCase):
                 if session["session_id"] not in before_ids:
                     await manager.close(str(session["session_id"]))
 
+    def test_connect_gdbserver_cancelled_connect_does_not_leak_session(self) -> None:
+        asyncio.run(self._test_connect_gdbserver_cancelled_connect_does_not_leak_session())
+
+    async def _test_connect_gdbserver_cancelled_connect_does_not_leak_session(self) -> None:
+        fake_gdb = Path(__file__).parent / "fixtures" / "fake_gdb.py"
+        fake_gdb.chmod(0o755)
+        before_ids = {session["session_id"] for session in await manager.list()}
+
+        async def cancelled_connect(*args: object, **kwargs: object) -> dict[str, object]:
+            raise asyncio.CancelledError
+
+        try:
+            with patch("gdb_mcp.server.GdbSession.connect_gdbserver", cancelled_connect):
+                with self.assertRaises(asyncio.CancelledError):
+                    await gdb_connect_gdbserver(
+                        "localhost:1234",
+                        gdb_path=str(fake_gdb),
+                        timeout=1.0,
+                    )
+            after_ids = {session["session_id"] for session in await manager.list()}
+            self.assertEqual(after_ids, before_ids)
+        finally:
+            for session in await manager.list():
+                if session["session_id"] not in before_ids:
+                    await manager.close(str(session["session_id"]))
+
     def test_thread_id_must_be_positive(self) -> None:
         result = asyncio.run(gdb_select_thread("missing", "0"))
         self.assertFalse(result["ok"])

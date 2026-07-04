@@ -589,9 +589,11 @@ class GdbSession:
         self.last_activity_at = started_at
         self._recent_commands.append(pending.history_entry)
 
+        sent = False
         try:
             async with self._write_lock:
                 process.stdin.write(f"{token}{command}\n".encode())
+                sent = True
                 await process.stdin.drain()
             return await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
         except asyncio.CancelledError:
@@ -602,7 +604,7 @@ class GdbSession:
                 status="cancelled",
                 error="Command task cancelled",
             )
-            if wait_for_stop and pending.saw_running and self.is_alive():
+            if wait_for_stop and (sent or pending.saw_running) and self.is_alive():
                 try:
                     await self.interrupt(timeout=1.0)
                 except Exception:

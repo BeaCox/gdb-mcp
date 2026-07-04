@@ -103,6 +103,40 @@ class GdbSessionAsyncTests(unittest.TestCase):
         finally:
             await manager.close_all()
 
+    def test_cancelled_sent_command_interrupts_before_running_record(self) -> None:
+        asyncio.run(self._test_cancelled_sent_command_interrupts_before_running_record())
+
+    async def _test_cancelled_sent_command_interrupts_before_running_record(self) -> None:
+        manager = SessionManager()
+        try:
+            session = await manager.create(
+                gdb_path=str(self.fake_gdb),
+                env={"FAKE_GDB_HOLD_RUN": "1"},
+            )
+            running = asyncio.create_task(
+                session.execute(
+                    "-exec-run",
+                    timeout=5.0,
+                    wait_for_stop=True,
+                )
+            )
+            await asyncio.sleep(0.05)
+            self.assertEqual(session.state, "ready")
+
+            running.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await running
+
+            self.assertEqual(session._pending, {})
+            self.assertEqual(session.state, "stopped")
+            commands = session.recent_commands(2)
+            self.assertEqual(commands[0]["command"], "-exec-run")
+            self.assertEqual(commands[0]["status"], "cancelled")
+            self.assertEqual(commands[1]["command"], "-exec-interrupt")
+            self.assertEqual(commands[1]["status"], "done")
+        finally:
+            await manager.close_all()
+
     def test_arguments_use_mi_c_strings(self) -> None:
         asyncio.run(self._test_arguments())
 

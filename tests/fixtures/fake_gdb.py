@@ -32,6 +32,8 @@ def main() -> None:
             emit("(gdb)")
             return
         if command == "-exec-run":
+            if os.getenv("FAKE_GDB_HOLD_RUN"):
+                continue
             emit(f"{token}^running")
             emit('*running,thread-id="all"')
             emit("(gdb)")
