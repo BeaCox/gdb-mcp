@@ -13,6 +13,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from ..config import ServerConfig
+from ..resources import command_reference_index, resource_index, tool_profile
 from ..responses import error_response
 from ..session import SessionManager
 
@@ -160,84 +161,11 @@ async def gdb_close_idle_sessions(max_idle_seconds: float = 3600.0) -> dict[str,
 
 
 async def gdb_command_reference() -> dict[str, Any]:
-    """Return common safe tool flows and GDB/MI command equivalents."""
+    """Return a compact index of safe flows and reference resources."""
 
     return {
         "ok": True,
-        "recommended_flow": [
-            "gdb_create_session",
-            "gdb_set_breakpoint",
-            "gdb_run_and_context",
-            "gdb_context",
-            "gdb_pwn_context",
-            "gdb_address_info",
-            "gdb_read_register",
-            "gdb_nearpc",
-            "gdb_telescope",
-            "gdb_continue_and_context",
-            "gdb_close_session",
-        ],
-        "safe_tools": {
-            "breakpoints": ["gdb_set_breakpoint", "gdb_list_breakpoints"],
-            "execution": [
-                "gdb_run_and_context",
-                "gdb_continue_and_context",
-                "gdb_step_and_context",
-                "gdb_next_and_context",
-            ],
-            "state": [
-                "gdb_context",
-                "gdb_backtrace",
-                "gdb_locals",
-                "gdb_read_register",
-                "gdb_register_names",
-                "gdb_register_context",
-                "gdb_read_memory",
-                "gdb_pwn_context",
-                "gdb_address_info",
-                "gdb_telescope",
-                "gdb_vmmap_structured",
-            ],
-            "source": [
-                "gdb_source",
-                "gdb_find_source",
-                "gdb_disassemble",
-                "gdb_disassemble_around_pc",
-                "gdb_nearpc",
-            ],
-            "binary_analysis": [
-                "gdb_pwn_context",
-                "gdb_binary_summary",
-                "gdb_register_context",
-                "gdb_vmmap_structured",
-                "gdb_address_info",
-                "gdb_rva_info",
-                "gdb_telescope",
-                "gdb_nearpc",
-                "gdb_symbols",
-                "gdb_got",
-                "gdb_piebase",
-                "gdb_break_rva",
-                "gdb_checksec",
-                "gdb_elf_info",
-            ],
-        },
-        "common_mi_commands": [
-            {"mi": "-break-insert LOCATION", "tool": "gdb_set_breakpoint"},
-            {"mi": "-break-delete NUM", "tool": "gdb_delete_breakpoint"},
-            {"mi": "-exec-run", "tool": "gdb_run"},
-            {"mi": "-exec-continue", "tool": "gdb_continue"},
-            {"mi": "-exec-step", "tool": "gdb_step"},
-            {"mi": "-exec-next", "tool": "gdb_next"},
-            {"mi": "-stack-list-frames 0 N", "tool": "gdb_backtrace"},
-            {"mi": "-data-evaluate-expression EXPR", "tool": "gdb_eval_expression"},
-            {"mi": "-data-list-register-values FMT", "tool": "gdb_registers"},
-            {"mi": "-data-read-memory-bytes ADDRESS COUNT", "tool": "gdb_read_memory"},
-        ],
-        "unsafe_note": (
-            "Use gdb_execute only with --unsafe or GDB_MCP_ALLOW_UNSAFE=1. "
-            "Prefer dedicated tools when available."
-        ),
+        **command_reference_index(),
     }
 
 
@@ -288,6 +216,8 @@ async def gdb_capabilities() -> dict[str, Any]:
             "recommended_start": ["gdb_create_session", "gdb_list_sessions"],
             "recommended_finish": ["gdb_close_session", "gdb_close_idle_sessions"],
         },
+        "resources": resource_index(),
+        "tool_profiles": tool_profile(),
         "workflows": {
             "local_program": [
                 "gdb_create_session",

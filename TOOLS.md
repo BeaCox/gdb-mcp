@@ -144,9 +144,21 @@ and module-offset oriented.
 | `gdb_recent_events` | Read | `session_id`, `limit` | Return recent MI async/result records. |
 | `gdb_recent_commands` | Read | `session_id`, `limit` | Return recent commands sent to GDB. |
 | `gdb_session_diagnostics` | Read | `session_id` | Return session state plus recent commands/events. |
-| `gdb_command_reference` | Read | none | Return common safe tool flows and GDB/MI command equivalents. |
-| `gdb_capabilities` | Read | none | Return workflow-oriented capability groups, output strategy, safety posture, and reference-project notes. |
+| `gdb_command_reference` | Read | none | Return a compact index of safe flows and MCP reference resources. |
+| `gdb_capabilities` | Read | none | Return workflow groups, core and advanced tool profiles, output strategy, safety posture, and reference-project notes. |
 | `gdb_server_health` | Read | none | Report version, dependency paths/versions, safety mode, output limits, and sessions. |
+
+## MCP Resources
+
+Clients can list and read these resources without calling a large tool response:
+
+| URI | Purpose |
+| --- | --- |
+| `gdb://workflows/basic` | Common local, attach, source, and reverse-debugging tool sequences. |
+| `gdb://workflows/core-dump` | Core loading, path setup, and post-mortem inspection sequence. |
+| `gdb://workflows/binary-analysis` | Stripped-binary and exploit-development oriented inspection flows. |
+| `gdb://commands/mi` | Common GDB/MI commands and the preferred dedicated MCP tools. |
+| `gdb://tools/decision-guide` | Core profile, advanced groups, output strategy, and safety guidance. |
 
 ## Advanced
 

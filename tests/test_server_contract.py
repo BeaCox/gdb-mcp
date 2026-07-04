@@ -233,6 +233,37 @@ class ServerContractTests(unittest.TestCase):
     async def _tool_names(self) -> set[str]:
         return {tool.name for tool in await mcp.list_tools()}
 
+    def test_reference_resources_are_discoverable(self) -> None:
+        asyncio.run(self._test_reference_resources_are_discoverable())
+
+    async def _test_reference_resources_are_discoverable(self) -> None:
+        resources = await mcp.list_resources()
+        by_uri = {str(resource.uri): resource for resource in resources}
+        expected = {
+            "gdb://workflows/basic",
+            "gdb://workflows/core-dump",
+            "gdb://workflows/binary-analysis",
+            "gdb://commands/mi",
+            "gdb://tools/decision-guide",
+        }
+        self.assertEqual(sorted(expected - by_uri.keys()), [])
+        for uri in expected:
+            with self.subTest(uri=uri):
+                self.assertEqual(by_uri[uri].mimeType, "application/json")
+                contents = await mcp.read_resource(uri)
+                self.assertEqual(len(contents), 1)
+                document = json.loads(contents[0].content)
+                self.assertIn("summary", document)
+
+        command_reference = await gdb_command_reference()
+        self.assertTrue(command_reference["ok"])
+        self.assertEqual(
+            {resource["uri"] for resource in command_reference["resource_index"]},
+            expected,
+        )
+        self.assertEqual(command_reference["mi_command_reference"], "gdb://commands/mi")
+        self.assertNotIn("common_mi_commands", command_reference)
+
     def test_unsafe_execute_is_disabled_by_default(self) -> None:
         asyncio.run(self._test_unsafe_execute())
 

@@ -12,6 +12,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from .config import ServerConfig
+from .resources import register_resources
 from .session import CommandResult, GdbMcpError, GdbSession, SessionManager, _truncate_text
 from .tools import binary as _binary_tools
 from .tools import breakpoints as _breakpoint_tools
@@ -245,6 +246,7 @@ _diagnostics_tools.register_tools(
     read_only=READ_ONLY,
     session_mutation=SESSION_MUTATION,
 )
+register_resources(mcp)
 
 
 def _build_parser() -> argparse.ArgumentParser:

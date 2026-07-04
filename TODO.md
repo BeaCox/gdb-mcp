@@ -34,7 +34,7 @@ open source GDB MCP servers, including `signal-slot/mcp-gdb`,
 
 ## P1: Agent Experience
 
-- [ ] Move long-form reference material into MCP resources.
+- [x] Move long-form reference material into MCP resources.
   - Add resources such as `gdb://workflows/basic`,
     `gdb://workflows/core-dump`, `gdb://workflows/binary-analysis`,
     `gdb://commands/mi`, and `gdb://tools/decision-guide`.
@@ -43,7 +43,7 @@ open source GDB MCP servers, including `signal-slot/mcp-gdb`,
   - Acceptance: clients can discover workflows without calling a large tool
     response.
 
-- [ ] Define a smaller recommended tool profile.
+- [x] Define a smaller recommended tool profile.
   - Document a core default set of roughly 20-30 tools for common debugging.
   - Keep binary-analysis, reverse-debugging, remote-target, diagnostics, and
     unsafe tools discoverable but clearly grouped as advanced workflows.
