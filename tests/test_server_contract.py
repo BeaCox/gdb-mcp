@@ -19,6 +19,7 @@ from gdb_mcp.server import (
     gdb_checksec,
     gdb_close_idle_sessions,
     gdb_command_reference,
+    gdb_connect_gdbserver,
     gdb_context,
     gdb_continue_and_context,
     gdb_current_location,
@@ -253,6 +254,28 @@ class ServerContractTests(unittest.TestCase):
         result = asyncio.run(gdb_load_core("/tmp/core\nbad", session_id="missing"))
         self.assertFalse(result["ok"])
         self.assertIn("line breaks", result["error"])
+
+    def test_connect_gdbserver_invalid_endpoint_does_not_leak_session(self) -> None:
+        asyncio.run(self._test_connect_gdbserver_invalid_endpoint_does_not_leak_session())
+
+    async def _test_connect_gdbserver_invalid_endpoint_does_not_leak_session(self) -> None:
+        fake_gdb = Path(__file__).parent / "fixtures" / "fake_gdb.py"
+        fake_gdb.chmod(0o755)
+        before_ids = {session["session_id"] for session in await manager.list()}
+        try:
+            result = await gdb_connect_gdbserver(
+                "bad endpoint",
+                gdb_path=str(fake_gdb),
+                timeout=1.0,
+            )
+            after_ids = {session["session_id"] for session in await manager.list()}
+            self.assertFalse(result["ok"])
+            self.assertIn("single unquoted", result["error"])
+            self.assertEqual(after_ids, before_ids)
+        finally:
+            for session in await manager.list():
+                if session["session_id"] not in before_ids:
+                    await manager.close(str(session["session_id"]))
 
     def test_thread_id_must_be_positive(self) -> None:
         result = asyncio.run(gdb_select_thread("missing", "0"))

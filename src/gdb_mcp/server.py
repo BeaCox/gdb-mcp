@@ -561,8 +561,9 @@ async def gdb_connect_gdbserver(
     """Connect a session to an existing gdbserver endpoint."""
 
     created_session = False
+    session: GdbSession | None = None
     try:
-        _require_single_line("endpoint", endpoint)
+        _require_mi_word("endpoint", endpoint)
         if session_id:
             session = await manager.get(session_id)
         else:
@@ -589,6 +590,11 @@ async def gdb_connect_gdbserver(
             }
         return {"ok": result["ok"], "session": session.describe(), "command": result}
     except Exception as exc:
+        if created_session and session is not None:
+            try:
+                await manager.close(session.session_id)
+            except Exception:
+                await session.close()
         return _error(exc)
 
 
