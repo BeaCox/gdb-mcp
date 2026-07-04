@@ -7,6 +7,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from gdb_mcp.mi import MIRecord
+from gdb_mcp.responses import (
+    command_response,
+    diagnostic_response,
+    error_response,
+    session_response,
+)
 from gdb_mcp.server import (
     _run_readelf,
     gdb_address_info,
@@ -87,9 +94,44 @@ from gdb_mcp.server import (
     mcp,
     runtime_config,
 )
+from gdb_mcp.session import CommandResult, GdbSession
 
 
 class ServerContractTests(unittest.TestCase):
+    def test_shared_response_helpers_cover_common_shapes(self) -> None:
+        session = GdbSession(session_id="response-test", output_limit_chars=2_000)
+        result = CommandResult(
+            command="-stack-info-frame",
+            records=[],
+            result_record=MIRecord(
+                kind="result",
+                raw='1^done,addr="0x0000000000401000"',
+                token=1,
+                record_class="done",
+                results={"addr": "0x0000000000401000"},
+            ),
+        )
+
+        command = command_response(session, result)
+        self.assertTrue(command["ok"])
+        self.assertEqual(command["command"], "-stack-info-frame")
+        self.assertEqual(command["output_limit_chars"], 2_000)
+        self.assertEqual(command["results"]["addr"], "0x401000")
+
+        self.assertEqual(
+            session_response(session)["session"]["session_id"],
+            "response-test",
+        )
+        self.assertEqual(
+            diagnostic_response(session_count=0),
+            {"ok": True, "session_count": 0},
+        )
+
+        error = error_response(ValueError("bad input"))
+        self.assertFalse(error["ok"])
+        self.assertEqual(error["error"], "bad input")
+        self.assertEqual(error["error_type"], "ValueError")
+
     def test_tools_have_stable_mcp_metadata(self) -> None:
         asyncio.run(self._test_tools())
 

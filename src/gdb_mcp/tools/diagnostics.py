@@ -13,6 +13,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from ..config import ServerConfig
+from ..responses import error_response
 from ..session import SessionManager
 
 ErrorHandler = Callable[[Exception], dict[str, Any]]
@@ -71,7 +72,7 @@ def _require_config() -> ServerConfig:
 
 def _error(exc: Exception) -> dict[str, Any]:
     if _error_handler is None:
-        return {"ok": False, "error": str(exc), "error_type": type(exc).__name__}
+        return error_response(exc)
     return _error_handler(exc)
 
 

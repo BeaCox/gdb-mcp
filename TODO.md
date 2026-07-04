@@ -10,7 +10,7 @@ open source GDB MCP servers, including `signal-slot/mcp-gdb`,
 
 ## P0: Maintainability
 
-- [ ] Split `src/gdb_mcp/server.py` by tool domain.
+- [x] Split `src/gdb_mcp/server.py` by tool domain.
   - Target modules: `tools/session.py`, `tools/execution.py`,
     `tools/breakpoints.py`, `tools/inspection.py`, `tools/binary.py`,
     `tools/remote.py`, and `tools/diagnostics.py`.
@@ -19,14 +19,14 @@ open source GDB MCP servers, including `signal-slot/mcp-gdb`,
   - Acceptance: no tool names or public argument names change; full test suite
     remains green.
 
-- [ ] Introduce shared response models.
+- [x] Introduce shared response models.
   - Define common shapes for success, error, session, command, and diagnostic
     responses.
   - Reduce ad hoc dictionaries and inconsistent response fields across tools.
   - Acceptance: contract tests cover representative responses for each tool
     family.
 
-- [ ] Preserve the cancellation and cleanup guarantees during refactors.
+- [x] Preserve the cancellation and cleanup guarantees during refactors.
   - Keep coverage for cancelled GDB commands, cancelled gdbserver connects,
     pending-command cleanup, and managed gdbserver teardown.
   - Acceptance: async lifecycle tests still exercise cancellation before and
