@@ -50,6 +50,8 @@ Response-size profiles:
 | `gdb_step_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw`, `output` | Step into, then return compact context. |
 | `gdb_next` | Execution | `session_id`, `instruction` | Step over a line or instruction. |
 | `gdb_next_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw`, `output` | Step over, then return compact context. |
+| `gdb_rr_record` | Execution | `program`, `args`, `cwd`, `rr_path`, `trace_dir`, `disable_perf_counters` | Record one program run with rr and return the trace directory. |
+| `gdb_start_rr_replay_session` | Mutation | `trace_dir`, `cwd`, `rr_path` | Start a GDB/MI replay session from an rr trace. |
 | `gdb_start_recording` | Mutation | `session_id`, `method`, `timeout` | Enable GDB process recording for reverse debugging. |
 | `gdb_stop_recording` | Mutation | `session_id`, `timeout` | Stop an active GDB process recording target. |
 | `gdb_record_status` | Read | `session_id` | Return current recording status. |

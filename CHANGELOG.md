@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Native `rr` record/replay workflow tools:
+  `gdb_rr_record` and `gdb_start_rr_replay_session`.
+
 ## [0.3.1] - 2026-06-22
 
 ### Fixed

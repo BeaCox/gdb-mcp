@@ -26,12 +26,14 @@ from gdb_mcp.server import (
     gdb_nearpc,
     gdb_print,
     gdb_pwn_context,
+    gdb_rr_record,
     gdb_run,
     gdb_run_and_context,
     gdb_set_breakpoint,
     gdb_set_watchpoint,
     gdb_source,
     gdb_stack_arguments,
+    gdb_start_rr_replay_session,
     gdb_telescope,
     gdb_thread_apply_all_backtrace,
     gdb_vmmap_structured,
@@ -130,6 +132,47 @@ class GdbSessionSmokeTests(unittest.TestCase):
                 self.assertTrue(continued["ok"], continued)
                 self.assertEqual(continued["result_class"], "running")
                 self.assertEqual(continued["stopped"]["reason"], "exited-normally")
+            finally:
+                await gdb_close_session(session_id)
+
+    def test_rr_record_and_replay_smoke(self) -> None:
+        if shutil.which("cc") is None:
+            self.skipTest("cc is not available")
+        if shutil.which("gdb") is None:
+            self.skipTest("gdb is not available")
+        if shutil.which("rr") is None:
+            self.skipTest("rr is not available")
+
+        asyncio.run(self._run_rr_smoke())
+
+    async def _run_rr_smoke(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "sample"
+            trace_dir = Path(tmp) / "rr-sample-trace"
+            await compile_fixture(self, SAMPLE, binary)
+
+            recorded = await gdb_rr_record(
+                str(binary),
+                trace_dir=str(trace_dir),
+                disable_perf_counters=True,
+                timeout=20.0,
+            )
+            if not recorded["ok"]:
+                self.skipTest(f"rr record failed: {recorded}")
+
+            replayed = await gdb_start_rr_replay_session(
+                str(trace_dir),
+                startup_timeout=20.0,
+            )
+            if not replayed["ok"]:
+                self.skipTest(f"rr replay failed: {replayed}")
+
+            session_id = replayed["session"]["session_id"]
+            try:
+                context = await gdb_current_location(session_id)
+                self.assertTrue(context["ok"], context)
+                reverse = await gdb_continue_and_context(session_id, timeout=10.0)
+                self.assertTrue(reverse["ok"], reverse)
             finally:
                 await gdb_close_session(session_id)
 

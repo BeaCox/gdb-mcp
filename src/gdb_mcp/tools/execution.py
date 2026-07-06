@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+import re
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from ..mi import c_escape
-from ..session import GdbMcpError
+from ..session import GdbMcpError, _truncate_text
 from .shared import (
     _error,
     _require_cli_target,
@@ -16,6 +22,11 @@ from .shared import (
     _result,
     manager,
     runtime_config,
+)
+
+_RR_TRACE_RE = re.compile(
+    r"trace directory [`'](?P<trace>.+?)[`']",
+    re.IGNORECASE,
 )
 
 
@@ -41,6 +52,8 @@ def register_tools(
     mcp.tool(annotations=destructive)(gdb_kill)
     mcp.tool(annotations=target_execution)(gdb_step)
     mcp.tool(annotations=target_execution)(gdb_next)
+    mcp.tool(annotations=target_execution)(gdb_rr_record)
+    mcp.tool(annotations=session_mutation)(gdb_start_rr_replay_session)
     mcp.tool(annotations=session_mutation)(gdb_start_recording)
     mcp.tool(annotations=session_mutation)(gdb_stop_recording)
     mcp.tool(annotations=read_only)(gdb_record_status)
@@ -322,6 +335,140 @@ async def gdb_next(
             session,
             await session.execute(command, timeout=timeout, wait_for_stop=True),
         )
+    except Exception as exc:
+        return _error(exc)
+
+
+def _default_rr_trace_dir(program: str) -> str:
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(program).name).strip("._")
+    if not name:
+        name = "trace"
+    parent = tempfile.mkdtemp(prefix="gdb-mcp-rr-")
+    return str(Path(parent) / name)
+
+
+async def _terminate_process(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    process.terminate()
+    try:
+        await asyncio.wait_for(process.wait(), timeout=2.0)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
+
+
+async def gdb_rr_record(
+    program: str,
+    args: list[str] | None = None,
+    cwd: str | None = None,
+    rr_path: str = "rr",
+    trace_dir: str | None = None,
+    disable_perf_counters: bool = False,
+    timeout: float = 120.0,
+) -> dict[str, Any]:
+    """Record one program run with rr and return the trace directory."""
+
+    try:
+        _require_cli_target("program", program)
+        if cwd is not None:
+            _require_cli_target("cwd", cwd)
+        if trace_dir is not None:
+            _require_cli_target("trace_dir", trace_dir)
+        for index, arg in enumerate(args or []):
+            _require_single_line(f"args[{index}]", arg)
+
+        resolved_rr = shutil.which(rr_path)
+        if resolved_rr is None:
+            raise GdbMcpError(f"rr executable not found: {rr_path}")
+
+        actual_trace_dir = trace_dir or _default_rr_trace_dir(program)
+        command = [resolved_rr, "record"]
+        if disable_perf_counters:
+            command.append("-n")
+        command.extend([f"--output-trace-dir={actual_trace_dir}", "--", program])
+        command.extend(args or [])
+
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=cwd,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        except asyncio.CancelledError:
+            await _terminate_process(process)
+            raise
+        except asyncio.TimeoutError:
+            await _terminate_process(process)
+            raise TimeoutError(f"rr record timed out after {timeout} seconds") from None
+
+        output = stdout.decode(errors="replace")
+        match = _RR_TRACE_RE.search(output)
+        if match is not None:
+            actual_trace_dir = match.group("trace")
+        truncated_output, truncated = _truncate_text(
+            output.strip(),
+            max(1_000, runtime_config.output_limit_chars // 2),
+        )
+        trace_exists = await asyncio.to_thread(os.path.exists, actual_trace_dir)
+        if not trace_exists:
+            return {
+                "ok": False,
+                "error": "rr did not create a trace directory",
+                "trace_dir": actual_trace_dir,
+                "rr_returncode": process.returncode,
+                "output": truncated_output,
+                "truncated": truncated,
+            }
+        return {
+            "ok": True,
+            "trace_dir": actual_trace_dir,
+            "rr_returncode": process.returncode,
+            "output": truncated_output,
+            "truncated": truncated,
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+async def gdb_start_rr_replay_session(
+    trace_dir: str | None = None,
+    cwd: str | None = None,
+    rr_path: str = "rr",
+    startup_timeout: float = 15.0,
+) -> dict[str, Any]:
+    """Start a GDB/MI session backed by rr replay."""
+
+    try:
+        resolved_rr = shutil.which(rr_path)
+        if resolved_rr is None:
+            raise GdbMcpError(f"rr executable not found: {rr_path}")
+        replay_args = ["replay"]
+        if trace_dir is not None:
+            _require_cli_target("trace_dir", trace_dir)
+            trace_exists = await asyncio.to_thread(os.path.exists, trace_dir)
+            if not trace_exists:
+                raise FileNotFoundError(f"rr trace directory not found: {trace_dir}")
+            replay_args.append(trace_dir)
+        if cwd is not None:
+            _require_cli_target("cwd", cwd)
+        replay_args.append("--")
+
+        session = await manager.create(
+            gdb_path=resolved_rr,
+            gdb_args=replay_args,
+            cwd=cwd,
+            rr_trace_dir=trace_dir,
+            startup_timeout=startup_timeout,
+        )
+        return {
+            "ok": True,
+            "session": session.describe(),
+            "trace_dir": trace_dir,
+            "rr_replay": True,
+        }
     except Exception as exc:
         return _error(exc)
 

@@ -64,7 +64,7 @@ open source GDB MCP servers, including `signal-slot/mcp-gdb`,
 
 ## P1: Debugging Capability
 
-- [ ] Add native rr workflows.
+- [x] Add native rr workflows.
   - Add tools such as `gdb_rr_record` and `gdb_start_rr_replay_session`.
   - Reuse existing reverse/context tools for replay sessions where possible.
   - Acceptance: a smoke test records a small binary and replays it when `rr` is

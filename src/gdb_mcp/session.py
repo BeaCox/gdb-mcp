@@ -269,11 +269,13 @@ class _PendingCommand:
 @dataclass
 class GdbSession:
     gdb_path: str = "gdb"
+    gdb_args: list[str] = field(default_factory=list)
     program: str | None = None
     args: list[str] = field(default_factory=list)
     cwd: str | None = None
     env: dict[str, str] | None = None
     output_limit_chars: int = 100_000
+    rr_trace_dir: str | None = None
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: float = field(default_factory=_wall_time)
     process: asyncio.subprocess.Process | None = None
@@ -310,6 +312,7 @@ class GdbSession:
 
         command = [
             resolved_gdb,
+            *self.gdb_args,
             "--interpreter=mi2",
             "--nx",
             "--nh",
@@ -499,6 +502,7 @@ class GdbSession:
             "program": self.program,
             "args": self.args,
             "cwd": self.cwd or os.getcwd(),
+            "rr_trace_dir": self.rr_trace_dir,
             "alive": self.is_alive(),
             "state": self.state,
             "gdb_pid": self.process.pid if self.process else None,
@@ -784,10 +788,12 @@ class SessionManager:
         self,
         *,
         gdb_path: str = "gdb",
+        gdb_args: list[str] | None = None,
         program: str | None = None,
         args: list[str] | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        rr_trace_dir: str | None = None,
         startup_timeout: float = 10.0,
     ) -> GdbSession:
         async with self._lock:
@@ -803,11 +809,13 @@ class SessionManager:
 
         session = GdbSession(
             gdb_path=gdb_path,
+            gdb_args=gdb_args or [],
             program=program,
             args=args or [],
             cwd=cwd,
             env=env,
             output_limit_chars=self.output_limit_chars,
+            rr_trace_dir=rr_trace_dir,
         )
         try:
             await session.start(startup_timeout=startup_timeout)

@@ -72,6 +72,7 @@ from gdb_mcp.server import (
     gdb_reverse_next_and_context,
     gdb_reverse_step,
     gdb_reverse_step_and_context,
+    gdb_rr_record,
     gdb_rva_info,
     gdb_search_memory,
     gdb_select_thread,
@@ -85,6 +86,7 @@ from gdb_mcp.server import (
     gdb_source,
     gdb_stack_arguments,
     gdb_start_recording,
+    gdb_start_rr_replay_session,
     gdb_step_and_context,
     gdb_stop_recording,
     gdb_symbols,
@@ -155,6 +157,8 @@ class ServerContractTests(unittest.TestCase):
             "gdb_kill",
             "gdb_restart",
             "gdb_signal",
+            "gdb_rr_record",
+            "gdb_start_rr_replay_session",
             "gdb_start_recording",
             "gdb_stop_recording",
             "gdb_record_status",
@@ -434,6 +438,16 @@ class ServerContractTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("line breaks", result["error"])
 
+    def test_rr_tools_report_missing_rr_dependency(self) -> None:
+        missing_rr = "/definitely/missing/rr"
+        record = asyncio.run(gdb_rr_record("/tmp/sample", rr_path=missing_rr))
+        replay = asyncio.run(gdb_start_rr_replay_session(rr_path=missing_rr))
+
+        self.assertFalse(record["ok"])
+        self.assertIn("rr executable not found", record["error"])
+        self.assertFalse(replay["ok"])
+        self.assertIn("rr executable not found", replay["error"])
+
     def test_connect_gdbserver_invalid_endpoint_does_not_leak_session(self) -> None:
         asyncio.run(self._test_connect_gdbserver_invalid_endpoint_does_not_leak_session())
 
@@ -528,9 +542,12 @@ class ServerContractTests(unittest.TestCase):
 
     async def _test_new_tool_commands(self) -> None:
         fake_gdb = Path(__file__).parent / "fixtures" / "fake_gdb.py"
+        fake_rr = Path(__file__).parent / "fixtures" / "fake_rr.py"
         fake_gdb.chmod(0o755)
+        fake_rr.chmod(0o755)
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "commands.log"
+            trace_path = Path(tmp) / "sample trace"
             session = await manager.create(
                 gdb_path=str(fake_gdb),
                 env={"FAKE_GDB_LOG": str(log_path)},
@@ -547,6 +564,27 @@ class ServerContractTests(unittest.TestCase):
                     ]
                 )
                 self.assertTrue((await gdb_signal(session_id, "0"))["ok"])
+                recorded = await gdb_rr_record(
+                    "/tmp/sample",
+                    args=["hello"],
+                    rr_path=str(fake_rr),
+                    trace_dir=str(trace_path),
+                    timeout=1.0,
+                )
+                self.assertTrue(recorded["ok"], recorded)
+                self.assertEqual(recorded["trace_dir"], str(trace_path))
+                self.assertTrue(trace_path.exists())
+                replayed = await gdb_start_rr_replay_session(
+                    str(trace_path),
+                    rr_path=str(fake_rr),
+                    startup_timeout=1.0,
+                )
+                self.assertTrue(replayed["ok"], replayed)
+                self.assertEqual(
+                    replayed["session"]["rr_trace_dir"],
+                    str(trace_path),
+                )
+                await manager.close(replayed["session"]["session_id"])
                 self.assertTrue((await gdb_start_recording(session_id))["ok"])
                 self.assertTrue((await gdb_record_status(session_id))["ok"])
                 self.assertTrue((await gdb_reverse_continue(session_id))["ok"])

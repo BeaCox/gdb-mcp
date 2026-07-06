@@ -261,6 +261,31 @@ async def gdb_capabilities() -> dict[str, Any]:
             "recommended_start": ["gdb_create_session", "gdb_list_sessions"],
             "recommended_finish": ["gdb_close_session", "gdb_close_idle_sessions"],
         },
+        "dependencies": {
+            "required": {
+                "gdb": {
+                    "tools": [
+                        "gdb_create_session",
+                        "gdb_attach",
+                        "gdb_load_core",
+                        "gdb_run_and_context",
+                        "gdb_context",
+                    ],
+                },
+            },
+            "optional": {
+                "gdbserver": {
+                    "tools": [
+                        "gdb_connect_gdbserver",
+                        "gdb_launch_gdbserver",
+                        "gdb_gdbserver_status",
+                    ],
+                },
+                "rr": {
+                    "tools": ["gdb_rr_record", "gdb_start_rr_replay_session"],
+                },
+            },
+        },
         "resources": resource_index(),
         "tool_profiles": tool_profile(),
         "workflows": {
@@ -306,6 +331,8 @@ async def gdb_capabilities() -> dict[str, Any]:
                 "gdb_elf_info",
             ],
             "reverse_debugging": [
+                "gdb_rr_record",
+                "gdb_start_rr_replay_session",
                 "gdb_start_recording",
                 "gdb_reverse_continue_and_context",
                 "gdb_reverse_step_and_context",
@@ -398,9 +425,11 @@ async def gdb_server_health() -> dict[str, Any]:
         package_version = "0+unknown"
     gdb_path = shutil.which("gdb")
     gdbserver_path = shutil.which("gdbserver")
-    gdb_version, gdbserver_version = await asyncio.gather(
+    rr_path = shutil.which("rr")
+    gdb_version, gdbserver_version, rr_version = await asyncio.gather(
         _version_for(gdb_path, "--version"),
         _version_for(gdbserver_path, "--version"),
+        _version_for(rr_path, "--version"),
     )
     sessions = await _require_manager().list()
     return {
@@ -410,9 +439,37 @@ async def gdb_server_health() -> dict[str, Any]:
         "gdb_available": gdb_path is not None,
         "gdb_path": gdb_path,
         "gdb_version": gdb_version,
+        "required_dependencies": {
+            "gdb": {
+                "available": gdb_path is not None,
+                "path": gdb_path,
+                "version": gdb_version,
+            },
+        },
+        "optional_dependencies": {
+            "gdbserver": {
+                "available": gdbserver_path is not None,
+                "path": gdbserver_path,
+                "version": gdbserver_version,
+                "tools": [
+                    "gdb_connect_gdbserver",
+                    "gdb_launch_gdbserver",
+                    "gdb_gdbserver_status",
+                ],
+            },
+            "rr": {
+                "available": rr_path is not None,
+                "path": rr_path,
+                "version": rr_version,
+                "tools": ["gdb_rr_record", "gdb_start_rr_replay_session"],
+            },
+        },
         "gdbserver_available": gdbserver_path is not None,
         "gdbserver_path": gdbserver_path,
         "gdbserver_version": gdbserver_version,
+        "rr_available": rr_path is not None,
+        "rr_path": rr_path,
+        "rr_version": rr_version,
         "unsafe_execute_enabled": runtime_config.allow_unsafe_execute,
         "max_sessions": runtime_config.max_sessions,
         "output_limit_chars": runtime_config.output_limit_chars,

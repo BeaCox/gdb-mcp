@@ -63,9 +63,11 @@ ADVANCED_TOOL_GROUPS: dict[str, dict[str, Any]] = {
         ],
     },
     "reverse_debugging": {
-        "description": "GDB process-record and reverse execution controls.",
+        "description": "rr replay, GDB process-record, and reverse execution controls.",
         "resource_uri": "gdb://tools/decision-guide",
         "tools": [
+            "gdb_rr_record",
+            "gdb_start_rr_replay_session",
             "gdb_start_recording",
             "gdb_record_status",
             "gdb_reverse_continue",
@@ -298,8 +300,24 @@ REFERENCE_RESOURCES: dict[str, dict[str, Any]] = {
             },
             {
                 "name": "reverse_debugging",
-                "use_when": "GDB process recording is available and the bug requires time travel.",
+                "use_when": (
+                    "rr or GDB process recording is available and the bug requires "
+                    "time travel."
+                ),
                 "steps": [
+                    {
+                        "tool": "gdb_rr_record",
+                        "purpose": (
+                            "Optionally record a reproducible run with rr and return "
+                            "the trace directory."
+                        ),
+                    },
+                    {
+                        "tool": "gdb_start_rr_replay_session",
+                        "purpose": (
+                            "Optionally start a GDB/MI replay session from the rr trace."
+                        ),
+                    },
                     {
                         "tool": "gdb_start_recording",
                         "purpose": (
@@ -496,6 +514,10 @@ REFERENCE_RESOURCES: dict[str, dict[str, Any]] = {
             {
                 "when": "The target is remote",
                 "use": ["gdb_connect_gdbserver", "gdb_set_remote_paths", "gdb_gdbserver_status"],
+            },
+            {
+                "when": "Need deterministic replay or stronger reverse execution",
+                "use": ["gdb_rr_record", "gdb_start_rr_replay_session", "gdb_context"],
             },
             {
                 "when": "A tool could execute target code or mutate memory",
