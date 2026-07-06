@@ -28,6 +28,49 @@ _RR_TRACE_RE = re.compile(
     r"trace directory [`'](?P<trace>.+?)[`']",
     re.IGNORECASE,
 )
+_RR_PERF_PERMISSION_MARKERS = (
+    "perf_event_open",
+    "perf_event_paranoid",
+    "performance counters",
+    "perf counters",
+)
+_PERF_EVENT_PARANOID_PATH = Path("/proc/sys/kernel/perf_event_paranoid")
+
+
+def _read_perf_event_paranoid() -> int | None:
+    try:
+        return int(_PERF_EVENT_PARANOID_PATH.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _rr_perf_permission_details(
+    output: str,
+    *,
+    disable_syscall_buffer: bool,
+) -> dict[str, Any] | None:
+    lowered = output.lower()
+    if not any(marker in lowered for marker in _RR_PERF_PERMISSION_MARKERS):
+        return None
+
+    suggestions = [
+        "Set kernel.perf_event_paranoid to 1 or lower, for example: "
+        "sudo sysctl kernel.perf_event_paranoid=1.",
+        "Persist the setting in /etc/sysctl.d/ when the host policy allows it.",
+    ]
+    if not disable_syscall_buffer:
+        suggestions.append(
+            "Retry with disable_syscall_buffer=true to ask rr to use "
+            "--no-syscall-buffer; this is slower and may still require perf "
+            "access on some systems."
+        )
+
+    return {
+        "error": "rr cannot access perf_event_open performance counters",
+        "error_type": "rr_perf_event_permission_denied",
+        "perf_event_paranoid": _read_perf_event_paranoid(),
+        "suggestions": suggestions,
+    }
 
 
 def register_tools(
@@ -364,7 +407,7 @@ async def gdb_rr_record(
     cwd: str | None = None,
     rr_path: str = "rr",
     trace_dir: str | None = None,
-    disable_perf_counters: bool = False,
+    disable_syscall_buffer: bool = False,
     timeout: float = 120.0,
 ) -> dict[str, Any]:
     """Record one program run with rr and return the trace directory."""
@@ -384,8 +427,8 @@ async def gdb_rr_record(
 
         actual_trace_dir = trace_dir or _default_rr_trace_dir(program)
         command = [resolved_rr, "record"]
-        if disable_perf_counters:
-            command.append("-n")
+        if disable_syscall_buffer:
+            command.append("--no-syscall-buffer")
         command.extend([f"--output-trace-dir={actual_trace_dir}", "--", program])
         command.extend(args or [])
 
@@ -414,7 +457,7 @@ async def gdb_rr_record(
         )
         trace_exists = await asyncio.to_thread(os.path.exists, actual_trace_dir)
         if not trace_exists:
-            return {
+            response = {
                 "ok": False,
                 "error": "rr did not create a trace directory",
                 "trace_dir": actual_trace_dir,
@@ -422,6 +465,13 @@ async def gdb_rr_record(
                 "output": truncated_output,
                 "truncated": truncated,
             }
+            perf_details = _rr_perf_permission_details(
+                output,
+                disable_syscall_buffer=disable_syscall_buffer,
+            )
+            if perf_details is not None:
+                response.update(perf_details)
+            return response
         return {
             "ok": True,
             "trace_dir": actual_trace_dir,

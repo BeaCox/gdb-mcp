@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -20,7 +21,13 @@ def _trace_dir(args: list[str]) -> str | None:
 
 def main() -> None:
     args = sys.argv[1:]
+    if log_path := os.environ.get("FAKE_RR_LOG"):
+        Path(log_path).write_text("\n".join(args), encoding="utf-8")
     if args[:1] == ["record"]:
+        if os.environ.get("FAKE_RR_FAIL_PERF"):
+            print("Permission denied to use 'perf_event_open'")
+            print("rr needs /proc/sys/kernel/perf_event_paranoid <= 1, but it is 4.")
+            raise SystemExit(1)
         trace_dir = _trace_dir(args)
         if trace_dir is None:
             raise SystemExit("missing --output-trace-dir")

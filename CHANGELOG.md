@@ -37,6 +37,10 @@ All notable changes to this project are documented here.
 - Propagated lazy backend diagnostics configuration through the proxy path.
 - Hardened debugger tool input validation and bounded `readelf` output while
   separating readelf options from file paths.
+- Replaced the misleading `gdb_rr_record` `disable_perf_counters` parameter
+  with `disable_syscall_buffer`, matching rr's `--no-syscall-buffer` option.
+- Reported rr `perf_event_open` permission failures with structured
+  `rr_perf_event_permission_denied` diagnostics and host sysctl guidance.
 
 ## [0.3.1] - 2026-06-22
 

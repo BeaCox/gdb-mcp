@@ -154,7 +154,6 @@ class GdbSessionSmokeTests(unittest.TestCase):
             recorded = await gdb_rr_record(
                 str(binary),
                 trace_dir=str(trace_dir),
-                disable_perf_counters=True,
                 timeout=20.0,
             )
             if not recorded["ok"]:

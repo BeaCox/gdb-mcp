@@ -50,7 +50,7 @@ Response-size profiles:
 | `gdb_step_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw`, `output` | Step into, then return compact context. |
 | `gdb_next` | Execution | `session_id`, `instruction` | Step over a line or instruction. |
 | `gdb_next_and_context` | Execution | `session_id`, `instruction`, `timeout`, `max_frames`, `include_raw`, `output` | Step over, then return compact context. |
-| `gdb_rr_record` | Execution | `program`, `args`, `cwd`, `rr_path`, `trace_dir`, `disable_perf_counters` | Record one program run with rr and return the trace directory. |
+| `gdb_rr_record` | Execution | `program`, `args`, `cwd`, `rr_path`, `trace_dir`, `disable_syscall_buffer` | Record one program run with rr and return the trace directory. |
 | `gdb_start_rr_replay_session` | Mutation | `trace_dir`, `cwd`, `rr_path` | Start a GDB/MI replay session from an rr trace. |
 | `gdb_start_recording` | Mutation | `session_id`, `method`, `timeout` | Enable GDB process recording for reverse debugging. |
 | `gdb_stop_recording` | Mutation | `session_id`, `timeout` | Stop an active GDB process recording target. |
@@ -65,6 +65,11 @@ Response-size profiles:
 | `gdb_reverse_finish_and_context` | Execution | `session_id`, `timeout`, `max_frames`, `include_raw`, `output` | Run backward to the caller, then return compact context. |
 | `gdb_detach` | Execution | `session_id` | Detach from the current target. |
 | `gdb_kill` | Execution | `session_id` | Kill the current inferior. |
+
+`gdb_rr_record` requires host support for rr recording. If Linux denies
+`perf_event_open`, the tool returns `error_type:
+rr_perf_event_permission_denied`, the current `perf_event_paranoid` value when
+available, and suggested sysctl/rr fallback steps.
 
 ## Breakpoints
 

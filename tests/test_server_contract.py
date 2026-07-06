@@ -1,6 +1,7 @@
 import ast
 import asyncio
 import json
+import os
 import re
 import tempfile
 import unittest
@@ -221,6 +222,10 @@ class ServerContractTests(unittest.TestCase):
             "gdb_elf_info",
         ):
             self.assertIn(name, names)
+        rr_tool = next(tool for tool in tools if tool.name == "gdb_rr_record")
+        rr_properties = rr_tool.inputSchema.get("properties", {})
+        self.assertIn("disable_syscall_buffer", rr_properties)
+        self.assertNotIn("disable_perf_counters", rr_properties)
         for tool in tools:
             with self.subTest(tool=tool.name):
                 self.assertTrue(tool.description)
@@ -448,6 +453,28 @@ class ServerContractTests(unittest.TestCase):
         self.assertFalse(replay["ok"])
         self.assertIn("rr executable not found", replay["error"])
 
+    def test_rr_record_reports_perf_event_permission_failures(self) -> None:
+        asyncio.run(self._test_rr_record_reports_perf_event_permission_failures())
+
+    async def _test_rr_record_reports_perf_event_permission_failures(self) -> None:
+        fake_rr = Path(__file__).parent / "fixtures" / "fake_rr.py"
+        fake_rr.chmod(0o755)
+        with tempfile.TemporaryDirectory() as tmp:
+            trace_path = Path(tmp) / "trace"
+            with patch.dict(os.environ, {"FAKE_RR_FAIL_PERF": "1"}):
+                result = await gdb_rr_record(
+                    "/tmp/sample",
+                    rr_path=str(fake_rr),
+                    trace_dir=str(trace_path),
+                    timeout=1.0,
+                )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_type"], "rr_perf_event_permission_denied")
+        self.assertIn("perf_event_open", result["error"])
+        self.assertIn("perf_event_paranoid", result)
+        self.assertTrue(result["suggestions"])
+
     def test_connect_gdbserver_invalid_endpoint_does_not_leak_session(self) -> None:
         asyncio.run(self._test_connect_gdbserver_invalid_endpoint_does_not_leak_session())
 
@@ -547,6 +574,7 @@ class ServerContractTests(unittest.TestCase):
         fake_rr.chmod(0o755)
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "commands.log"
+            rr_log_path = Path(tmp) / "rr.log"
             trace_path = Path(tmp) / "sample trace"
             session = await manager.create(
                 gdb_path=str(fake_gdb),
@@ -564,16 +592,22 @@ class ServerContractTests(unittest.TestCase):
                     ]
                 )
                 self.assertTrue((await gdb_signal(session_id, "0"))["ok"])
-                recorded = await gdb_rr_record(
-                    "/tmp/sample",
-                    args=["hello"],
-                    rr_path=str(fake_rr),
-                    trace_dir=str(trace_path),
-                    timeout=1.0,
-                )
+                with patch.dict(os.environ, {"FAKE_RR_LOG": str(rr_log_path)}):
+                    recorded = await gdb_rr_record(
+                        "/tmp/sample",
+                        args=["hello"],
+                        rr_path=str(fake_rr),
+                        trace_dir=str(trace_path),
+                        disable_syscall_buffer=True,
+                        timeout=1.0,
+                    )
                 self.assertTrue(recorded["ok"], recorded)
                 self.assertEqual(recorded["trace_dir"], str(trace_path))
                 self.assertTrue(trace_path.exists())
+                self.assertEqual(
+                    rr_log_path.read_text(encoding="utf-8").splitlines()[:2],
+                    ["record", "--no-syscall-buffer"],
+                )
                 replayed = await gdb_start_rr_replay_session(
                     str(trace_path),
                     rr_path=str(fake_rr),
