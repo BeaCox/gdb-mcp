@@ -32,6 +32,12 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
+      - name: Check release version references
+        run: uv run python scripts/sync_release_version.py --check
+
+      - name: Check lazy MCP startup
+        run: uv run python scripts/check_lazy_startup.py --budget 5 --initialize-budget 3
+
       - name: Test
         run: uv run pytest --cov=gdb_mcp --cov-report=term-missing
 

@@ -4,10 +4,39 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-06
+
 ### Added
 
 - Native `rr` record/replay workflow tools:
   `gdb_rr_record` and `gdb_start_rr_replay_session`.
+- MCP reference resources for common workflows, core-dump inspection, binary
+  analysis, GDB/MI command mapping, and tool-selection guidance.
+- Response size profiles and cursor pagination metadata for large output tools,
+  including paged diagnostics, memory, source, disassembly, symbol, relocation,
+  and mapping responses.
+- Release helper scripts for syncing version references from `pyproject.toml`
+  and checking lazy MCP startup without touching the backend.
+
+### Changed
+
+- Split the monolithic server implementation into focused tool modules for
+  session lifecycle, execution, breakpoints, inspection, binary analysis,
+  remote targets, diagnostics, and shared helpers.
+- Centralized GDB command construction, response helpers, and binary-analysis
+  helpers to keep tool behavior consistent across the expanded API surface.
+- Expanded contract, lazy-proxy, session, installer, and rr fixture coverage for
+  the release-critical debugger workflows.
+- Documented lazy startup behavior and added CI checks for release-version
+  consistency and startup-time budgets.
+
+### Fixed
+
+- Hardened cancelled GDB command cleanup and cancelled session shutdown.
+- Closed managed `gdbserver` sessions on invalid endpoints.
+- Propagated lazy backend diagnostics configuration through the proxy path.
+- Hardened debugger tool input validation and bounded `readelf` output while
+  separating readelf options from file paths.
 
 ## [0.3.1] - 2026-06-22
 

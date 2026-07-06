@@ -73,7 +73,7 @@ sudo apt-get install -y gdbserver rr
 ### Codex
 
 ```bash
-codex plugin marketplace add BeaCox/gdb-mcp --ref v0.3.1
+codex plugin marketplace add BeaCox/gdb-mcp --ref v0.4.0
 codex plugin add gdb-mcp@beacox
 ```
 
@@ -81,7 +81,7 @@ Or register the MCP server directly:
 
 ```bash
 codex mcp add gdb -- \
-  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.3.1 gdb-mcp
+  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.4.0 gdb-mcp
 ```
 
 ### Claude Code
@@ -95,7 +95,7 @@ Or register the MCP server directly:
 
 ```bash
 claude mcp add --scope user gdb -- \
-  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.3.1 gdb-mcp
+  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.4.0 gdb-mcp
 ```
 
 ### From a Checkout
@@ -112,14 +112,32 @@ claude mcp add --scope user gdb -- uv run gdb-mcp
 The universal installer is also available:
 
 ```bash
-uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.3.1 gdb-mcp --install
-uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.3.1 gdb-mcp --install --direct
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.4.0 gdb-mcp --install
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.4.0 gdb-mcp --install --direct
 ```
 
 Print portable client configuration:
 
 ```bash
 gdb-mcp --print-config
+```
+
+## Startup Behavior
+
+The client-facing `gdb-mcp` command is a lazy stdio proxy. Client startup,
+`initialize`, `ping`, and `tools/list` do not start GDB or the full backend; the
+backend is created only when the first tool is called.
+
+For the fastest repeated startup, prefer an installed plugin or an already
+installed `gdb-mcp` command. Direct `uvx --from git+...` registrations are
+portable, but the first run after a new tag, cold cache, or network/cache
+failure can still spend time resolving and preparing the package before the lazy
+proxy starts.
+
+Release checks include:
+
+```bash
+uv run python scripts/check_lazy_startup.py
 ```
 
 ## Update

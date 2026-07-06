@@ -8,4 +8,5 @@ recursive-include examples *.c *.md
 recursive-include .claude-plugin *.json
 recursive-include .agents *.json
 recursive-include plugins *.json
+recursive-include scripts *.py
 recursive-include tests *.c *.py

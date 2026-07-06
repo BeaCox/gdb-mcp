@@ -1,5 +1,7 @@
 import json
 import re
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -69,6 +71,17 @@ class InstallerTests(unittest.TestCase):
         latest = re.search(r"(?m)^## \[(?P<version>[0-9]+\.[0-9]+\.[0-9]+)\]", changelog)
         self.assertIsNotNone(latest)
         self.assertEqual(latest.group("version"), version)
+
+    def test_release_version_sync_script_is_clean(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "scripts/sync_release_version.py", "--check"],
+            cwd=ROOT,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
 
     def test_parse_explicit_targets(self) -> None:
         self.assertEqual(parse_targets("claude,codex,claude"), ["claude", "codex"])

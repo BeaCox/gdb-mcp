@@ -30,3 +30,16 @@ uv run ruff check .
 uv run pytest --cov=gdb_mcp
 uv build
 ```
+
+## Release Prep
+
+`pyproject.toml` is the release-version source of truth. To prepare a new
+version and sync the README, walkthrough, plugin manifests, and pinned package
+sources:
+
+```bash
+uv run python scripts/sync_release_version.py --version 0.4.0
+uv lock
+uv run python scripts/sync_release_version.py --check
+uv run python scripts/check_lazy_startup.py
+```
