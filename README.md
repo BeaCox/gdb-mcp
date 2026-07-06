@@ -87,8 +87,8 @@ codex mcp add gdb -- \
 ### Claude Code
 
 ```bash
-claude plugin marketplace add BeaCox/gdb-mcp
-claude plugin install gdb-mcp@beacox
+claude plugin marketplace add BeaCox/gdb-mcp@v0.4.0
+claude plugin install gdb-mcp@beacox --scope user
 ```
 
 Or register the MCP server directly:
@@ -154,22 +154,34 @@ codex plugin marketplace add BeaCox/gdb-mcp --ref <new-tag>
 codex plugin add gdb-mcp@beacox
 ```
 
-For Claude Code plugin installs, refresh the marketplace entry and reinstall the
-plugin:
+For Claude Code plugin installs pinned to a release tag, replace the marketplace
+source and reinstall the plugin cache:
 
 ```bash
-claude plugin marketplace add BeaCox/gdb-mcp
-claude plugin install gdb-mcp@beacox
+claude plugin marketplace remove beacox
+claude plugin marketplace add BeaCox/gdb-mcp@<new-tag>
+claude plugin install gdb-mcp@beacox --scope user
+```
+
+If your Claude Code marketplace was intentionally left unpinned, refresh it and
+update the installed plugin instead:
+
+```bash
+claude plugin marketplace update beacox
+claude plugin update gdb-mcp@beacox --scope user
 ```
 
 For direct MCP registrations, replace the tag in the registered `uvx --from`
 source. Current Codex CLI releases replace an existing `gdb` server when the
-same name is added again, so direct registrations are the shortest update path:
+same name is added again. For Claude Code, remove the old direct registration
+first if `gdb` is already configured:
 
 ```bash
 codex mcp add gdb -- \
   uvx --from git+https://github.com/BeaCox/gdb-mcp.git@<new-tag> gdb-mcp
 
+# If Claude Code already has a direct gdb registration:
+claude mcp remove --scope user gdb
 claude mcp add --scope user gdb -- \
   uvx --from git+https://github.com/BeaCox/gdb-mcp.git@<new-tag> gdb-mcp
 ```
