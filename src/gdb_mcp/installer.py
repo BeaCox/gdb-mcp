@@ -21,6 +21,29 @@ PLUGIN_NAME = "gdb-mcp"
 MCP_SERVER_NAME = "gdb"
 
 
+class CommandFailed(RuntimeError):
+    """Raised when a client command exits unsuccessfully."""
+
+    def __init__(
+        self,
+        command: list[str],
+        returncode: int,
+        stdout: str,
+        stderr: str,
+    ) -> None:
+        self.command = command
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+        super().__init__(
+            f"Command failed with exit code {returncode}: {_format_command(command)}"
+        )
+
+    @property
+    def combined_output(self) -> str:
+        return f"{self.stdout}\n{self.stderr}".lower()
+
+
 def _checkout_version() -> str | None:
     pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
     if not pyproject.exists():
@@ -194,13 +217,31 @@ def _run(
     if result.returncode == 0:
         return
     combined = f"{result.stdout}\n{result.stderr}".lower()
-    if allow_existing and any(
-        marker in combined
-        for marker in ("already exists", "already added", "already configured")
+    if (
+        allow_existing
+        and "already added from a different source" not in combined
+        and any(
+            marker in combined
+            for marker in ("already exists", "already added", "already configured")
+        )
     ):
         return
-    raise RuntimeError(
-        f"Command failed with exit code {result.returncode}: {_format_command(command)}"
+    raise CommandFailed(command, result.returncode, result.stdout, result.stderr)
+
+
+def _is_codex_marketplace_ref_conflict(error: CommandFailed) -> bool:
+    combined = error.combined_output
+    return (
+        "marketplace" in combined
+        and "already added from a different source" in combined
+    )
+
+
+def _refresh_codex_marketplace(info: ClientInfo, *, dry_run: bool) -> None:
+    print("Refreshing Codex marketplace source...")
+    _run(
+        [info.command, "plugin", "marketplace", "remove", MARKETPLACE_NAME],
+        dry_run=dry_run,
     )
 
 
@@ -221,7 +262,18 @@ def install(
             _run(info.direct_mcp_install, dry_run=dry_run)
             continue
         for index, command in enumerate(info.plugin_install):
-            _run(command, dry_run=dry_run, allow_existing=index == 0)
+            try:
+                _run(command, dry_run=dry_run, allow_existing=index == 0)
+            except CommandFailed as error:
+                if (
+                    target == "codex"
+                    and index == 0
+                    and _is_codex_marketplace_ref_conflict(error)
+                ):
+                    _refresh_codex_marketplace(info, dry_run=dry_run)
+                    _run(command, dry_run=dry_run, allow_existing=index == 0)
+                    continue
+                raise
 
 
 def uninstall(

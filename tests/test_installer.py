@@ -12,6 +12,7 @@ from gdb_mcp.installer import (
     RELEASE_TAG,
     client_info,
     configuration,
+    install,
     parse_targets,
 )
 
@@ -54,6 +55,51 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(
             info.direct_mcp_install[-4:],
             ["uvx", "--from", PACKAGE_SOURCE, "gdb-mcp"],
+        )
+
+    def test_codex_install_refreshes_stale_marketplace_ref(self) -> None:
+        conflict = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr=(
+                "Error: marketplace 'beacox' is already added from a different "
+                "source; remove it before adding this source"
+            ),
+        )
+        success = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with (
+            patch("gdb_mcp.installer.shutil.which", return_value="/bin/codex"),
+            patch("gdb_mcp.installer.subprocess.run") as run,
+        ):
+            run.side_effect = [conflict, success, success, success]
+            install(["codex"])
+
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(
+            commands,
+            [
+                [
+                    "/bin/codex",
+                    "plugin",
+                    "marketplace",
+                    "add",
+                    "BeaCox/gdb-mcp",
+                    "--ref",
+                    RELEASE_TAG,
+                ],
+                ["/bin/codex", "plugin", "marketplace", "remove", "beacox"],
+                [
+                    "/bin/codex",
+                    "plugin",
+                    "marketplace",
+                    "add",
+                    "BeaCox/gdb-mcp",
+                    "--ref",
+                    RELEASE_TAG,
+                ],
+                ["/bin/codex", "plugin", "add", "gdb-mcp@beacox"],
+            ],
         )
 
     def test_release_version_references_match_project_version(self) -> None:

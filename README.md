@@ -145,9 +145,11 @@ uv run python scripts/check_lazy_startup.py
 Use the latest release tag listed in [CHANGELOG.md](CHANGELOG.md), then restart
 the MCP client after updating.
 
-For Codex plugin installs:
+For Codex plugin installs, replace the pinned marketplace snapshot and reinstall
+the plugin cache:
 
 ```bash
+codex plugin marketplace remove beacox
 codex plugin marketplace add BeaCox/gdb-mcp --ref <new-tag>
 codex plugin add gdb-mcp@beacox
 ```
@@ -161,7 +163,8 @@ claude plugin install gdb-mcp@beacox
 ```
 
 For direct MCP registrations, replace the tag in the registered `uvx --from`
-source, for example:
+source. Current Codex CLI releases replace an existing `gdb` server when the
+same name is added again, so direct registrations are the shortest update path:
 
 ```bash
 codex mcp add gdb -- \
