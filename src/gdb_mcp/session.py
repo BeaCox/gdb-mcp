@@ -72,10 +72,18 @@ def gdbserver_target_endpoint(listen: str, banner: str) -> str:
         port = match.group("port")
 
     if host:
+        if ":" in host and not (host.startswith("[") and host.endswith("]")):
+            host = f"[{host}]"
         return f"{host}:{port}"
     if port.isdigit():
         return f"localhost:{port}"
     return listen.lstrip(":")
+
+
+def _mi_target_endpoint(endpoint: str) -> str:
+    """Return a validated MI argument for a remote target endpoint."""
+
+    return _mi_word("endpoint", endpoint)
 
 
 def _truncate_text(value: str, limit: int) -> tuple[str, bool]:
@@ -385,7 +393,7 @@ class GdbSession:
                 return result.to_dict(self.output_limit_chars)
         mode = "extended-remote" if extended else "remote"
         result = await self.execute(
-            f"-target-select {mode} {_mi_word('endpoint', endpoint)}",
+            f"-target-select {mode} {_mi_target_endpoint(endpoint)}",
             timeout=timeout,
         )
         if result.result_record and result.result_record.record_class != "error":

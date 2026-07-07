@@ -29,7 +29,7 @@ Response-size profiles:
 | `gdb_attach` | Execution | `pid`, `program`, `session_id` | Attach to a local Linux process. |
 | `gdb_load_core` | Mutation | `core_path`, `program`, `session_id` | Load a Linux core file. Paths with spaces are quoted safely. |
 | `gdb_connect_gdbserver` | Mutation | `endpoint`, `program`, `extended`, `sysroot`, `solib_search_path` | Connect to an existing remote target. |
-| `gdb_launch_gdbserver` | Execution | `program`, `listen`, `target_endpoint`, `args` | Launch local `gdbserver` and connect to it. |
+| `gdb_launch_gdbserver` | Execution | `program`, `listen`, `target_endpoint`, `args`, `sysroot`, `solib_search_path` | Launch local `gdbserver` and connect to it. |
 | `gdb_list_sessions` | Read | none | List live sessions. |
 | `gdb_status` | Read | `session_id` | Describe one session. |
 | `gdb_close_session` | Mutation | `session_id` | Close GDB and any managed `gdbserver`. |

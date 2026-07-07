@@ -176,6 +176,8 @@ async def gdb_launch_gdbserver(
     gdb_path: str = "gdb",
     gdbserver_path: str = "gdbserver",
     extended: bool = False,
+    sysroot: str | None = None,
+    solib_search_path: str | None = None,
     timeout: float = 15.0,
 ) -> dict[str, Any]:
     """Launch a local gdbserver and connect a new GDB session to it."""
@@ -205,6 +207,8 @@ async def gdb_launch_gdbserver(
             target,
             extended=extended,
             timeout=timeout,
+            sysroot=sysroot,
+            solib_search_path=solib_search_path,
         )
         if not result["ok"]:
             await manager.close(session.session_id)

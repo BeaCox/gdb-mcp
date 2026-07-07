@@ -70,7 +70,7 @@ open source GDB MCP servers, including `signal-slot/mcp-gdb`,
   - Acceptance: a smoke test records a small binary and replays it when `rr` is
     available, skipping cleanly otherwise.
 
-- [ ] Expand remote-target coverage.
+- [x] Expand remote-target coverage.
   - Cover IPv6 endpoints, Unix-socket style targets if supported by GDB, custom
     `sysroot`, and `solib-search-path` workflows.
   - Acceptance: contract tests cover validation; smoke tests cover available

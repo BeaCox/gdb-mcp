@@ -5,7 +5,13 @@ import unittest
 from pathlib import Path
 
 from gdb_mcp.mi import MIRecord
-from gdb_mcp.session import CommandResult, GdbMcpError, GdbSession, SessionManager
+from gdb_mcp.session import (
+    CommandResult,
+    GdbMcpError,
+    GdbSession,
+    SessionManager,
+    gdbserver_target_endpoint,
+)
 
 
 class GdbSessionAsyncTests(unittest.TestCase):
@@ -259,6 +265,20 @@ class GdbSessionAsyncTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIsNone(payload["result_class"])
         self.assertEqual(payload["stopped"]["reason"], "exited-normally")
+
+    def test_gdbserver_target_endpoint_preserves_ipv6_brackets(self) -> None:
+        self.assertEqual(
+            gdbserver_target_endpoint("[::1]:0", "Listening on port 34567\n"),
+            "[::1]:34567",
+        )
+        self.assertEqual(
+            gdbserver_target_endpoint("::1:2345", ""),
+            "[::1]:2345",
+        )
+        self.assertEqual(
+            gdbserver_target_endpoint("[::]:0", "Listening on port 34568\n"),
+            "localhost:34568",
+        )
 
     def test_recent_commands_include_completion_diagnostics(self) -> None:
         asyncio.run(self._test_recent_command_diagnostics())

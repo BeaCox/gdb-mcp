@@ -49,6 +49,7 @@ from gdb_mcp.server import (
     gdb_got,
     gdb_info_files,
     gdb_kill,
+    gdb_launch_gdbserver,
     gdb_load_core,
     gdb_memory_mappings,
     gdb_nearpc,
@@ -496,6 +497,80 @@ class ServerContractTests(unittest.TestCase):
             for session in await manager.list():
                 if session["session_id"] not in before_ids:
                     await manager.close(str(session["session_id"]))
+
+    def test_connect_gdbserver_accepts_unix_socket_and_remote_paths(self) -> None:
+        asyncio.run(self._test_connect_gdbserver_accepts_unix_socket_and_remote_paths())
+
+    async def _test_connect_gdbserver_accepts_unix_socket_and_remote_paths(self) -> None:
+        fake_gdb = Path(__file__).parent / "fixtures" / "fake_gdb.py"
+        fake_gdb.chmod(0o755)
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "commands.log"
+            with patch.dict(os.environ, {"FAKE_GDB_LOG": str(log_path)}):
+                result = await gdb_connect_gdbserver(
+                    "unix:/tmp/gdb.sock",
+                    sysroot="/opt/target-root",
+                    solib_search_path="/opt/target-lib:/opt/vendor-lib",
+                    gdb_path=str(fake_gdb),
+                    timeout=1.0,
+                )
+            self.assertTrue(result["ok"], result)
+            session_id = result["session"]["session_id"]
+            try:
+                commands = log_path.read_text(encoding="utf-8")
+            finally:
+                await manager.close(session_id)
+
+        self.assertIn('-gdb-set sysroot "/opt/target-root"', commands)
+        self.assertIn(
+            '-gdb-set solib-search-path "/opt/target-lib:/opt/vendor-lib"',
+            commands,
+        )
+        self.assertIn("-target-select extended-remote unix:/tmp/gdb.sock", commands)
+
+    def test_launch_gdbserver_supports_ipv6_and_remote_paths(self) -> None:
+        asyncio.run(self._test_launch_gdbserver_supports_ipv6_and_remote_paths())
+
+    async def _test_launch_gdbserver_supports_ipv6_and_remote_paths(self) -> None:
+        fake_gdb = Path(__file__).parent / "fixtures" / "fake_gdb.py"
+        fake_gdb.chmod(0o755)
+
+        class FakeProcess:
+            pid = 1234
+            returncode = 0
+
+        async def fake_launch_gdbserver(
+            *args: object,
+            **kwargs: object,
+        ) -> tuple[object, str, asyncio.Task[None]]:
+            drain_task = asyncio.create_task(asyncio.sleep(0))
+            return FakeProcess(), "Listening on port 4567\n", drain_task
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "commands.log"
+            with patch.dict(os.environ, {"FAKE_GDB_LOG": str(log_path)}), patch(
+                "gdb_mcp.tools.session.launch_gdbserver",
+                fake_launch_gdbserver,
+            ):
+                result = await gdb_launch_gdbserver(
+                    "/tmp/sample",
+                    listen="[::1]:0",
+                    sysroot="/opt/target-root",
+                    solib_search_path="/opt/target-lib",
+                    gdb_path=str(fake_gdb),
+                    timeout=1.0,
+                )
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(result["session"]["gdbserver_endpoint"], "[::1]:4567")
+            session_id = result["session"]["session_id"]
+            try:
+                commands = log_path.read_text(encoding="utf-8")
+            finally:
+                await manager.close(session_id)
+
+        self.assertIn('-gdb-set sysroot "/opt/target-root"', commands)
+        self.assertIn('-gdb-set solib-search-path "/opt/target-lib"', commands)
+        self.assertIn("-target-select remote [::1]:4567", commands)
 
     def test_connect_gdbserver_cancelled_connect_does_not_leak_session(self) -> None:
         asyncio.run(self._test_connect_gdbserver_cancelled_connect_does_not_leak_session())
