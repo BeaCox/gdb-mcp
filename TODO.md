@@ -98,7 +98,7 @@ open source GDB MCP servers, including `signal-slot/mcp-gdb`,
 
 ## P2: Quality
 
-- [ ] Strengthen MI parser tests.
+- [x] Strengthen MI parser tests.
   - Add real GDB/MI transcript fixtures for async records, stream records,
     errors, nested values, and malformed lines.
   - Consider property/fuzz-style parser tests for `src/gdb_mcp/mi.py`.

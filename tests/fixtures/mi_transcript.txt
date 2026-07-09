@@ -1,0 +1,11 @@
+(gdb)
+~"GNU gdb (GDB) 14.2\n"
+&"set pagination off\n"
+=thread-group-added,id="i1"
+=thread-created,id="1",group-id="i1"
+1^done
+2^error,msg="No symbol table is loaded.  Use the \"file\" command."
+3^done,stack=[frame={level="0",addr="0x0000555555555151",func="main",args=[{name="argc",value="1"},{name="argv",value="0x7fffffffdc98"}],file="sample.c",fullname="/tmp/sample.c",line="7",arch="i386:x86-64"},frame={level="1",addr="0x00007ffff7c29d90",func="__libc_start_call_main",args=[{name="main",value="0x555555555139 <main>"},{name="argc",value="1"},{name="argv",value="0x7fffffffdc98"}],from="/lib/x86_64-linux-gnu/libc.so.6"}]
+=library-loaded,id="/lib64/ld-linux-x86-64.so.2",target-name="/lib64/ld-linux-x86-64.so.2",host-name="/lib64/ld-linux-x86-64.so.2",symbols-loaded="0",thread-group="i1",ranges=[{from="0x00007ffff7fcf000",to="0x00007ffff7ff2c15"}]
+*stopped,reason="breakpoint-hit",disp="keep",bkptno="1",frame={addr="0x0000555555555151",func="main",args=[{name="argc",value="1"}],file="sample.c",fullname="/tmp/sample.c",line="7",arch="i386:x86-64"},thread-id="1",stopped-threads="all",core="0"
+@"target output\n"
