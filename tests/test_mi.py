@@ -3,7 +3,6 @@ from pathlib import Path
 
 from gdb_mcp.mi import MIParseError, c_escape, parse_mi_record, quote_cli_command
 
-
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
