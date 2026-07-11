@@ -76,7 +76,7 @@ open source GDB MCP servers, including `signal-slot/mcp-gdb`,
   - Acceptance: contract tests cover validation; smoke tests cover available
     local `gdbserver` paths.
 
-- [ ] Add core-dump workflow tests with sysroot/search-path setup.
+- [x] Add core-dump workflow tests with sysroot/search-path setup.
   - Acceptance: a smoke test verifies core loading plus post-load path
     configuration and thread/backtrace inspection.
 

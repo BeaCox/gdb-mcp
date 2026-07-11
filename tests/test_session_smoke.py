@@ -8,6 +8,7 @@ from pathlib import Path
 from gdb_mcp.server import (
     gdb_address_info,
     gdb_attach,
+    gdb_backtrace,
     gdb_checksec,
     gdb_close_session,
     gdb_continue,
@@ -30,12 +31,14 @@ from gdb_mcp.server import (
     gdb_run,
     gdb_run_and_context,
     gdb_set_breakpoint,
+    gdb_set_remote_paths,
     gdb_set_watchpoint,
     gdb_source,
     gdb_stack_arguments,
     gdb_start_rr_replay_session,
     gdb_telescope,
     gdb_thread_apply_all_backtrace,
+    gdb_threads,
     gdb_vmmap_structured,
 )
 from gdb_mcp.session import SessionManager
@@ -399,6 +402,35 @@ class GdbSessionSmokeTests(unittest.TestCase):
             self.assertTrue(loaded["ok"], loaded)
             session_id = loaded["session"]["session_id"]
             try:
+                sysroot = Path(tmp) / "sysroot"
+                solib_search_path = Path(tmp) / "solib"
+                sysroot.mkdir()
+                solib_search_path.mkdir()
+
+                paths = await gdb_set_remote_paths(
+                    session_id,
+                    sysroot=str(sysroot),
+                    solib_search_path=str(solib_search_path),
+                )
+                self.assertTrue(paths["ok"], paths)
+                self.assertEqual(len(paths["commands"]), 2)
+
+                threads = await gdb_threads(session_id)
+                self.assertTrue(threads["ok"], threads)
+                self.assertIn("threads", threads["results"])
+
+                backtrace = await gdb_backtrace(session_id, max_frames=5)
+                self.assertTrue(backtrace["ok"], backtrace)
+                self.assertGreaterEqual(
+                    len(backtrace["results"].get("stack", [])),
+                    1,
+                    backtrace,
+                )
+
+                all_threads = await gdb_thread_apply_all_backtrace(session_id, max_frames=5)
+                self.assertTrue(all_threads["ok"], all_threads)
+                self.assertIn("Thread", all_threads["console"])
+
                 evaluated = await gdb_eval_expression(session_id, "marker")
                 self.assertTrue(evaluated["ok"], evaluated)
                 self.assertEqual(evaluated["results"]["value"], "1234")
