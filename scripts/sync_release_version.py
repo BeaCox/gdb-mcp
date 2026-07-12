@@ -116,6 +116,22 @@ def set_mcp_package_source(version: str) -> Callable[[dict[str, Any]], None]:
     return transform
 
 
+def set_server_metadata(version: str) -> Callable[[dict[str, Any]], None]:
+    def transform(data: dict[str, Any]) -> None:
+        if "version" not in data:
+            raise ValueError("server.json is missing version")
+        data["version"] = version
+        args = data["install"]["taggedGit"]["args"]
+        expected = f"{PACKAGE_SOURCE_PREFIX}v{version}"
+        for index, value in enumerate(args):
+            if isinstance(value, str) and value.startswith(PACKAGE_SOURCE_PREFIX):
+                args[index] = expected
+                return
+        raise ValueError("server.json is missing tagged Git package source")
+
+    return transform
+
+
 def latest_changelog_version(root: Path) -> str | None:
     text = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     match = re.search(r"(?m)^## \[(?P<version>\d+\.\d+\.\d+)\](?:\s+-\s+.*)?$", text)
@@ -168,6 +184,7 @@ def sync_release_version(root: Path, version: str, *, check: bool) -> tuple[list
             check=check,
         )
     )
+    changed.extend(sync_json_file(root, "server.json", set_server_metadata(version), check=check))
 
     changelog_version = latest_changelog_version(root)
     if changelog_version != version:

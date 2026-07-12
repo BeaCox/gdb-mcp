@@ -82,16 +82,16 @@ open source GDB MCP servers, including `signal-slot/mcp-gdb`,
 
 ## P2: Distribution
 
-- [ ] Publish stable PyPI releases.
+- [x] Publish stable PyPI releases.
   - Keep `uvx --from git+...` documented, but make `uvx gdb-mcp` or
     `pipx install gdb-mcp` viable.
   - Acceptance: README install paths include PyPI and tagged Git options.
 
-- [ ] Add registry metadata for MCP discovery sites.
+- [x] Add registry metadata for MCP discovery sites.
   - Consider `server.json` or equivalent metadata used by MCP marketplaces.
   - Acceptance: install instructions are machine-readable where practical.
 
-- [ ] Evaluate Nix/Homebrew packaging.
+- [x] Evaluate Nix/Homebrew packaging.
   - Nix is especially useful for GDB/gdbserver/rr dependencies.
   - Acceptance: documented optional install path or a clear decision not to
     support it yet.
@@ -104,36 +104,36 @@ open source GDB MCP servers, including `signal-slot/mcp-gdb`,
   - Consider property/fuzz-style parser tests for `src/gdb_mcp/mi.py`.
   - Acceptance: parser regressions fail without needing a live GDB process.
 
-- [ ] Add differential checks against known MI parsers or captured GDB output.
+- [x] Add differential checks against known MI parsers or captured GDB output.
   - Use this only for parser confidence; avoid adding heavyweight runtime
     dependencies to the package.
   - Acceptance: fixture-based comparison documents intentional differences.
 
-- [ ] Improve installer and lazy proxy coverage.
+- [x] Improve installer and lazy proxy coverage.
   - Current project coverage is strongest around server/session behavior; keep
     lifting coverage for install and proxy edge cases.
   - Acceptance: coverage gaps in `installer.py` and `lazy.py` are reduced for
     error handling and configuration branches.
 
-- [ ] Add performance and token-budget regression checks.
+- [x] Add performance and token-budget regression checks.
   - Track response sizes for common context, pwn context, symbol, and readelf
     workflows.
   - Acceptance: tests or scripts catch accidental large-response regressions.
 
 ## P2: Documentation
 
-- [ ] Add cookbook-style workflows.
+- [x] Add cookbook-style workflows.
   - Suggested topics: local source debugging, stripped binary analysis, core
     dump triage, remote gdbserver, managed gdbserver, attach/detach, reverse
     debugging, and unsafe-mode workflows.
   - Acceptance: each cookbook has a concrete tool sequence and expected result
     shape.
 
-- [ ] Document security tradeoffs per workflow.
+- [x] Document security tradeoffs per workflow.
   - Link each unsafe or destructive workflow back to `SECURITY.md`.
   - Acceptance: docs explain when to use containers, VMs, or dedicated users.
 
-- [ ] Add a compatibility matrix.
+- [x] Add a compatibility matrix.
   - Track Python versions, GDB versions, Linux distributions, gdbserver, rr,
     and known unsupported platforms.
   - Acceptance: contributors can tell whether a failure is expected or a bug.

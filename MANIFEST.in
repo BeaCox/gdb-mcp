@@ -3,10 +3,12 @@ include CHANGELOG.md
 include CODE_OF_CONDUCT.md
 include SECURITY.md
 include TOOLS.md
+include server.json
 recursive-include assets *.svg
+recursive-include docs *.md
 recursive-include examples *.c *.md
 recursive-include .claude-plugin *.json
 recursive-include .agents *.json
 recursive-include plugins *.json
 recursive-include scripts *.py
-recursive-include tests *.c *.py
+recursive-include tests *.c *.json *.py *.txt

@@ -40,6 +40,22 @@ targets.
 - Set a finite `GDB_MCP_MAX_SESSIONS`.
 - Review client confirmations for tools marked destructive or open-world.
 
+## Workflow Tradeoffs
+
+| Workflow | Main risk | Recommended isolation |
+| --- | --- | --- |
+| Local source debugging | Runs the inferior with the server account permissions. | Dedicated user, container, or VM for untrusted programs. |
+| Stripped binary analysis | Reads memory, registers, mappings, symbols, and paths that may contain secrets. | Dedicated workspace; request `summary` output before raw memory or readelf payloads. |
+| Core dump triage | Core files can contain credentials, keys, and private process memory. | Isolated storage and least-privilege file access. |
+| Remote gdbserver | Debug ports can control the target if exposed. | Bind locally, tunnel explicitly, and restrict with firewall policy. |
+| Managed gdbserver | Starts an additional process under the server account. | Dedicated user or container when launching untrusted binaries. |
+| Attach/detach | Can stop and inspect sensitive local processes. | Run as a user that owns only approved debug targets. |
+| Reverse debugging | rr traces can preserve sensitive memory and system interaction data. | Treat traces as confidential artifacts. |
+| Unsafe mode | Can call target functions, mutate memory, and run raw GDB commands. | Disposable VM, container, or dedicated user; enable only for trusted clients and targets. |
+
+Cookbook tool sequences for these workflows are documented in
+[docs/WORKFLOWS.md](docs/WORKFLOWS.md).
+
 ## Reporting
 
 Please report suspected vulnerabilities privately through GitHub Private

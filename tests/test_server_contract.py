@@ -392,6 +392,61 @@ class ServerContractTests(unittest.TestCase):
         finally:
             await manager.close(session.session_id)
 
+    def test_common_responses_stay_within_budget(self) -> None:
+        asyncio.run(self._test_common_responses_stay_within_budget())
+
+    async def _test_common_responses_stay_within_budget(self) -> None:
+        fake_gdb = Path(__file__).parent / "fixtures" / "fake_gdb.py"
+        fake_gdb.chmod(0o755)
+        session = await manager.create(gdb_path=str(fake_gdb))
+        try:
+            payloads = {
+                "context": await gdb_context(session.session_id, output="summary"),
+                "pwn_context": await gdb_pwn_context(
+                    session.session_id,
+                    telescope_count=2,
+                    nearpc_lines=4,
+                    output="summary",
+                ),
+                "symbols": await gdb_symbols(
+                    session.session_id,
+                    query="main",
+                    output="summary",
+                    page_size=5,
+                ),
+            }
+
+            with tempfile.TemporaryDirectory() as tmp:
+                fake_readelf = Path(tmp) / "readelf"
+                fake_readelf.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "for index in range(200):\n"
+                    "    print(f'{index:04x} section line with bounded output')\n",
+                    encoding="utf-8",
+                )
+                fake_readelf.chmod(0o755)
+                with patch("gdb_mcp.server.shutil.which", return_value=str(fake_readelf)):
+                    payloads["readelf"] = await _run_readelf(
+                        "/tmp/sample",
+                        ["-S"],
+                        timeout=1.0,
+                        output="summary",
+                    )
+        finally:
+            await manager.close(session.session_id)
+
+        budgets = {
+            "context": 8_000,
+            "pwn_context": 12_000,
+            "symbols": 6_000,
+            "readelf": 4_000,
+        }
+        for name, payload in payloads.items():
+            with self.subTest(name=name):
+                self.assertTrue(payload["ok"], payload)
+                encoded_size = len(json.dumps(payload, sort_keys=True))
+                self.assertLessEqual(encoded_size, budgets[name], encoded_size)
+
     def test_protocol_module_has_no_print_calls(self) -> None:
         path = Path(__file__).resolve().parents[1] / "src" / "gdb_mcp" / "session.py"
         tree = ast.parse(path.read_text(encoding="utf-8"))

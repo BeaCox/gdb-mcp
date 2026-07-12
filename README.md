@@ -70,6 +70,35 @@ sudo apt-get install -y gdbserver rr
 
 ## Install
 
+### From PyPI
+
+For released versions published to PyPI, run the lazy stdio MCP server directly:
+
+```bash
+uvx gdb-mcp
+```
+
+Or install the command into an isolated environment:
+
+```bash
+pipx install gdb-mcp
+gdb-mcp --print-config
+```
+
+Direct MCP registration from PyPI:
+
+```bash
+codex mcp add gdb -- uvx gdb-mcp
+claude mcp add --scope user gdb -- uvx gdb-mcp
+```
+
+The tagged Git form remains available when you want to pin an exact repository
+snapshot before or instead of a PyPI release:
+
+```bash
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.4.0 gdb-mcp
+```
+
 ### Codex
 
 ```bash
@@ -120,7 +149,14 @@ Print portable client configuration:
 
 ```bash
 gdb-mcp --print-config
+# Or prefer the PyPI package form:
+gdb-mcp --source gdb-mcp --print-config
 ```
+
+Machine-readable registry metadata is available in [server.json](server.json).
+Cookbook workflows and compatibility notes are maintained in
+[docs/WORKFLOWS.md](docs/WORKFLOWS.md) and
+[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
 ## Startup Behavior
 

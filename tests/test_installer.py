@@ -9,7 +9,10 @@ from unittest.mock import patch
 from gdb_mcp.installer import (
     MARKETPLACE_NAME,
     PACKAGE_SOURCE,
+    PYPI_PACKAGE_NAME,
     RELEASE_TAG,
+    CommandFailed,
+    _run,
     client_info,
     configuration,
     install,
@@ -55,6 +58,17 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(
             info.direct_mcp_install[-4:],
             ["uvx", "--from", PACKAGE_SOURCE, "gdb-mcp"],
+        )
+
+    def test_pypi_source_uses_simple_uvx_invocation(self) -> None:
+        with patch("gdb_mcp.installer.shutil.which", return_value="/bin/codex"):
+            info = client_info("codex", package_source=PYPI_PACKAGE_NAME)
+
+        self.assertEqual(info.direct_mcp_install[-2:], ["uvx", "gdb-mcp"])
+        payload = configuration(PYPI_PACKAGE_NAME)
+        self.assertEqual(
+            payload["codex"]["mcp_servers"]["gdb"],  # type: ignore[index]
+            {"command": "uvx", "args": ["gdb-mcp"]},
         )
 
     def test_codex_install_refreshes_stale_marketplace_ref(self) -> None:
@@ -133,6 +147,30 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(parse_targets("claude,codex,claude"), ["claude", "codex"])
         with self.assertRaises(ValueError):
             parse_targets("unknown")
+
+    def test_parse_auto_targets_reports_missing_clients(self) -> None:
+        with patch("gdb_mcp.installer.detect_clients", return_value=[]):
+            with self.assertRaisesRegex(RuntimeError, "No supported clients"):
+                parse_targets("auto")
+
+    def test_run_allows_existing_config_but_not_ref_conflict(self) -> None:
+        already_configured = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="server already configured",
+        )
+        ref_conflict = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="marketplace already added from a different source",
+        )
+        with patch("gdb_mcp.installer.subprocess.run", return_value=already_configured):
+            _run(["client", "add"], dry_run=False, allow_existing=True)
+        with patch("gdb_mcp.installer.subprocess.run", return_value=ref_conflict):
+            with self.assertRaises(CommandFailed):
+                _run(["client", "add"], dry_run=False, allow_existing=True)
 
     def test_configuration_is_json_serializable(self) -> None:
         payload = configuration()

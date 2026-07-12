@@ -92,6 +92,47 @@ class LazyProxyTests(unittest.TestCase):
                 else:
                     os.environ[name] = value
 
+    def test_lazy_backend_from_env_splits_command_and_args(self) -> None:
+        names = (
+            "GDB_MCP_BACKEND_COMMAND",
+            "GDB_MCP_BACKEND_ARGS",
+            "GDB_MCP_BACKEND_CWD",
+            "GDB_MCP_BACKEND_STARTUP_TIMEOUT",
+        )
+        previous = {name: os.environ.get(name) for name in names}
+        try:
+            os.environ["GDB_MCP_BACKEND_COMMAND"] = "python -m gdb_mcp.server"
+            os.environ["GDB_MCP_BACKEND_ARGS"] = "--unsafe --max-sessions 2"
+            os.environ["GDB_MCP_BACKEND_CWD"] = "/tmp/gdb-mcp"
+            os.environ["GDB_MCP_BACKEND_STARTUP_TIMEOUT"] = "7.5"
+
+            backend = LazyBackend.from_env()
+            self.assertEqual(backend.command, "python")
+            self.assertEqual(
+                backend.args,
+                ["-m", "gdb_mcp.server", "--unsafe", "--max-sessions", "2"],
+            )
+            self.assertEqual(backend.cwd, "/tmp/gdb-mcp")
+            self.assertEqual(backend.startup_timeout, 7.5)
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+    def test_lazy_backend_from_env_rejects_empty_backend_command(self) -> None:
+        previous = os.environ.get("GDB_MCP_BACKEND_COMMAND")
+        try:
+            os.environ["GDB_MCP_BACKEND_COMMAND"] = "   "
+            with self.assertRaisesRegex(ValueError, "must not be empty"):
+                LazyBackend.from_env()
+        finally:
+            if previous is None:
+                os.environ.pop("GDB_MCP_BACKEND_COMMAND", None)
+            else:
+                os.environ["GDB_MCP_BACKEND_COMMAND"] = previous
+
     def test_static_tool_list_matches_full_server_without_backend(self) -> None:
         asyncio.run(self._test_static_tool_list())
 

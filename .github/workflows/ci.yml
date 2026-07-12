@@ -48,6 +48,7 @@ jobs:
           uv run python -m json.tool .agents/plugins/marketplace.json >/dev/null
           uv run python -m json.tool plugins/gdb-mcp/.codex-plugin/plugin.json >/dev/null
           uv run python -m json.tool plugins/gdb-mcp/.mcp.json >/dev/null
+          uv run python -m json.tool server.json >/dev/null
 
       - name: Build
         run: uv build

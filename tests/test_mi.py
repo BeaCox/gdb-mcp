@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 
@@ -105,6 +106,18 @@ class MIParserTests(unittest.TestCase):
 
         self.assertEqual(records[10].stream, "target")
         self.assertEqual(records[10].text, "target output\n")
+
+    def test_mi_transcript_matches_expected_parser_snapshot(self) -> None:
+        actual = []
+        for line in (FIXTURES / "mi_transcript.txt").read_text(encoding="utf-8").splitlines():
+            record = parse_mi_record(line).to_dict()
+            record.pop("raw")
+            actual.append(record)
+
+        expected = json.loads(
+            (FIXTURES / "mi_transcript_expected.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(actual, expected)
 
     def test_parse_result_list_with_repeated_non_frame_keys(self) -> None:
         record = parse_mi_record(

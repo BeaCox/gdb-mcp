@@ -1,0 +1,81 @@
+{
+  "name": "gdb-mcp",
+  "version": "0.4.0",
+  "description": "Multi-session Model Context Protocol server for GDB and gdbserver.",
+  "repository": "https://github.com/BeaCox/gdb-mcp",
+  "homepage": "https://github.com/BeaCox/gdb-mcp",
+  "license": "MIT",
+  "categories": [
+    "developer-tools",
+    "debugging"
+  ],
+  "keywords": [
+    "gdb",
+    "gdbserver",
+    "debugger",
+    "mcp"
+  ],
+  "transport": {
+    "type": "stdio",
+    "serverName": "gdb"
+  },
+  "install": {
+    "pypi": {
+      "command": "uvx",
+      "args": [
+        "gdb-mcp"
+      ]
+    },
+    "pipx": {
+      "command": "pipx",
+      "args": [
+        "install",
+        "gdb-mcp"
+      ]
+    },
+    "taggedGit": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/BeaCox/gdb-mcp.git@v0.4.0",
+        "gdb-mcp"
+      ]
+    }
+  },
+  "mcpServers": {
+    "gdb": {
+      "command": "uvx",
+      "args": [
+        "gdb-mcp"
+      ]
+    }
+  },
+  "capabilities": {
+    "sessions": "multi-session",
+    "debuggers": [
+      "gdb",
+      "gdbserver"
+    ],
+    "optionalDebuggers": [
+      "rr"
+    ],
+    "resources": [
+      "gdb://workflows/basic",
+      "gdb://workflows/core-dump",
+      "gdb://workflows/binary-analysis",
+      "gdb://commands/mi",
+      "gdb://tools/decision-guide"
+    ]
+  },
+  "security": {
+    "policy": "SECURITY.md",
+    "unsafeMode": "--unsafe or GDB_MCP_ALLOW_UNSAFE=1",
+    "unsafeTools": [
+      "gdb_execute",
+      "gdb_call_function",
+      "gdb_set_variable",
+      "gdb_write_memory",
+      "gdb_breakpoint_commands"
+    ]
+  }
+}

@@ -1,0 +1,176 @@
+[
+  {
+    "class": null,
+    "kind": "prompt",
+    "results": {},
+    "stream": null,
+    "text": null,
+    "token": null
+  },
+  {
+    "class": null,
+    "kind": "stream",
+    "results": {},
+    "stream": "console",
+    "text": "GNU gdb (GDB) 14.2\n",
+    "token": null
+  },
+  {
+    "class": null,
+    "kind": "stream",
+    "results": {},
+    "stream": "log",
+    "text": "set pagination off\n",
+    "token": null
+  },
+  {
+    "class": "thread-group-added",
+    "kind": "notify",
+    "results": {
+      "id": "i1"
+    },
+    "stream": null,
+    "text": null,
+    "token": null
+  },
+  {
+    "class": "thread-created",
+    "kind": "notify",
+    "results": {
+      "group-id": "i1",
+      "id": "1"
+    },
+    "stream": null,
+    "text": null,
+    "token": null
+  },
+  {
+    "class": "done",
+    "kind": "result",
+    "results": {},
+    "stream": null,
+    "text": null,
+    "token": 1
+  },
+  {
+    "class": "error",
+    "kind": "result",
+    "results": {
+      "msg": "No symbol table is loaded.  Use the \"file\" command."
+    },
+    "stream": null,
+    "text": null,
+    "token": 2
+  },
+  {
+    "class": "done",
+    "kind": "result",
+    "results": {
+      "stack": [
+        {
+          "frame": {
+            "addr": "0x0000555555555151",
+            "arch": "i386:x86-64",
+            "args": [
+              {
+                "name": "argc",
+                "value": "1"
+              },
+              {
+                "name": "argv",
+                "value": "0x7fffffffdc98"
+              }
+            ],
+            "file": "sample.c",
+            "fullname": "/tmp/sample.c",
+            "func": "main",
+            "level": "0",
+            "line": "7"
+          }
+        },
+        {
+          "frame": {
+            "addr": "0x00007ffff7c29d90",
+            "args": [
+              {
+                "name": "main",
+                "value": "0x555555555139 <main>"
+              },
+              {
+                "name": "argc",
+                "value": "1"
+              },
+              {
+                "name": "argv",
+                "value": "0x7fffffffdc98"
+              }
+            ],
+            "from": "/lib/x86_64-linux-gnu/libc.so.6",
+            "func": "__libc_start_call_main",
+            "level": "1"
+          }
+        }
+      ]
+    },
+    "stream": null,
+    "text": null,
+    "token": 3
+  },
+  {
+    "class": "library-loaded",
+    "kind": "notify",
+    "results": {
+      "host-name": "/lib64/ld-linux-x86-64.so.2",
+      "id": "/lib64/ld-linux-x86-64.so.2",
+      "ranges": [
+        {
+          "from": "0x00007ffff7fcf000",
+          "to": "0x00007ffff7ff2c15"
+        }
+      ],
+      "symbols-loaded": "0",
+      "target-name": "/lib64/ld-linux-x86-64.so.2",
+      "thread-group": "i1"
+    },
+    "stream": null,
+    "text": null,
+    "token": null
+  },
+  {
+    "class": "stopped",
+    "kind": "exec",
+    "results": {
+      "bkptno": "1",
+      "core": "0",
+      "disp": "keep",
+      "frame": {
+        "addr": "0x0000555555555151",
+        "arch": "i386:x86-64",
+        "args": [
+          {
+            "name": "argc",
+            "value": "1"
+          }
+        ],
+        "file": "sample.c",
+        "fullname": "/tmp/sample.c",
+        "func": "main",
+        "line": "7"
+      },
+      "reason": "breakpoint-hit",
+      "stopped-threads": "all",
+      "thread-id": "1"
+    },
+    "stream": null,
+    "text": null,
+    "token": null
+  },
+  {
+    "class": null,
+    "kind": "stream",
+    "results": {},
+    "stream": "target",
+    "text": "target output\n",
+    "token": null
+  }
+]

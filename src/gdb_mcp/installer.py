@@ -19,6 +19,7 @@ MARKETPLACE_SOURCE = "BeaCox/gdb-mcp"
 MARKETPLACE_NAME = "beacox"
 PLUGIN_NAME = "gdb-mcp"
 MCP_SERVER_NAME = "gdb"
+PYPI_PACKAGE_NAME = "gdb-mcp"
 
 
 class CommandFailed(RuntimeError):
@@ -76,6 +77,8 @@ class ClientInfo:
 
 
 def _uvx_server_command(package_source: str = PACKAGE_SOURCE) -> list[str]:
+    if package_source == PYPI_PACKAGE_NAME:
+        return ["uvx", PYPI_PACKAGE_NAME]
     return ["uvx", "--from", package_source, "gdb-mcp"]
 
 
@@ -296,9 +299,10 @@ def uninstall(
 
 
 def configuration(package_source: str = PACKAGE_SOURCE) -> dict[str, object]:
+    server_command = _uvx_server_command(package_source)
     server = {
-        "command": "uvx",
-        "args": ["--from", package_source, "gdb-mcp"],
+        "command": server_command[0],
+        "args": server_command[1:],
     }
     return {
         "claude_code": {
