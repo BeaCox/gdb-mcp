@@ -13,9 +13,9 @@ import json
 import os
 import shlex
 import sys
+from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters

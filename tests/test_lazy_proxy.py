@@ -12,8 +12,8 @@ from gdb_mcp.lazy import (
     LazyBackend,
     _backend_subprocess_env,
     _dispatch_jsonrpc,
-    list_proxy_tools,
     list_proxy_resources,
+    list_proxy_tools,
     read_proxy_resource,
 )
 from gdb_mcp.prompts import prompt_index, render_prompt

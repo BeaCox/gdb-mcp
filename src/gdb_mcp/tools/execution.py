@@ -10,12 +10,12 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
 from ..mi import c_escape
 from ..session import GdbMcpError, _truncate_text
+from .progress import report_progress
 from .shared import (
     _error,
     _require_cli_target,
@@ -24,7 +24,6 @@ from .shared import (
     manager,
     runtime_config,
 )
-from .progress import report_progress
 
 _RR_TRACE_RE = re.compile(
     r"trace directory [`'](?P<trace>.+?)[`']",

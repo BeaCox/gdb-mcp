@@ -6,8 +6,7 @@ import asyncio
 from collections.abc import Callable
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
 from ..mi import c_escape
