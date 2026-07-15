@@ -15,6 +15,7 @@ import shlex
 import sys
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -23,6 +24,8 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import CallToolResult, Tool
 
 from . import __version__
+from .prompts import prompt_index, render_prompt
+from .resources import RESOURCE_MIME_TYPE, read_reference_resource, resource_index
 
 INSTRUCTIONS = (
     "This is a lazy proxy for gdb-mcp. It exposes gdb-mcp tools immediately, "
@@ -39,6 +42,43 @@ async def list_proxy_tools() -> list[Tool]:
     from .server import mcp
 
     return await mcp.list_tools()
+
+
+def list_proxy_resources() -> list[dict[str, Any]]:
+    """Return the backend's static resource metadata without starting it."""
+
+    return [
+        {
+            "uri": resource["uri"],
+            "name": resource["name"],
+            "title": resource["title"],
+            "description": resource["description"],
+            "mimeType": RESOURCE_MIME_TYPE,
+        }
+        for resource in resource_index()
+    ]
+
+
+def read_proxy_resource(uri: str) -> dict[str, Any]:
+    """Return one static resource in the MCP ``resources/read`` result shape."""
+
+    if not isinstance(uri, str) or not uri:
+        raise ValueError("resources/read requires a resource URI")
+
+    try:
+        content = read_reference_resource(uri)
+    except KeyError as exc:
+        raise ValueError(f"Unknown resource: {uri}") from exc
+
+    return {
+        "contents": [
+            {
+                "uri": uri,
+                "mimeType": RESOURCE_MIME_TYPE,
+                "text": json.dumps(content, indent=2),
+            }
+        ]
+    }
 
 
 def _split_env_command(value: str) -> tuple[str, list[str]]:
@@ -90,9 +130,20 @@ class LazyBackend:
             startup_timeout=timeout,
         )
 
-    async def call_tool(self, name: str, arguments: dict[str, Any] | None) -> CallToolResult:
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None,
+        progress_callback: (
+            Callable[[float, float | None, str | None], Awaitable[None]] | None
+        ) = None,
+    ) -> CallToolResult:
         session = await self._ensure_session()
-        return await session.call_tool(name, arguments or {})
+        return await session.call_tool(
+            name,
+            arguments or {},
+            progress_callback=progress_callback,
+        )
 
     async def close(self) -> None:
         async with self._lock:
@@ -155,6 +206,29 @@ async def run_stdio(backend: LazyBackend | None = None) -> None:
 
 
 async def _run_raw_stdio_proxy(backend: LazyBackend) -> None:
+    output_lock = asyncio.Lock()
+
+    async def write_message(message: dict[str, Any]) -> None:
+        encoded = json.dumps(message, separators=(",", ":")).encode("utf-8")
+        async with output_lock:
+            sys.stdout.buffer.write(encoded + b"\n")
+            sys.stdout.buffer.flush()
+
+    async def emit_progress(
+        token: str | int,
+        progress: float,
+        total: float | None,
+        message: str | None,
+    ) -> None:
+        params: dict[str, Any] = {"progressToken": token, "progress": progress}
+        if total is not None:
+            params["total"] = total
+        if message is not None:
+            params["message"] = message
+        await write_message(
+            {"jsonrpc": "2.0", "method": "notifications/progress", "params": params}
+        )
+
     while True:
         line = await asyncio.to_thread(sys.stdin.buffer.readline)
         if not line:
@@ -162,17 +236,18 @@ async def _run_raw_stdio_proxy(backend: LazyBackend) -> None:
         line = line.strip()
         if not line:
             continue
-        response = await _dispatch_jsonrpc(backend, line)
+        response = await _dispatch_jsonrpc(backend, line, emit_progress=emit_progress)
         if response is None:
             continue
-        encoded = json.dumps(response, separators=(",", ":")).encode("utf-8")
-        sys.stdout.buffer.write(encoded + b"\n")
-        sys.stdout.buffer.flush()
+        await write_message(response)
 
 
 async def _dispatch_jsonrpc(
     backend: LazyBackend,
     raw_request: bytes,
+    emit_progress: (
+        Callable[[str | int, float, float | None, str | None], Awaitable[None]] | None
+    ) = None,
 ) -> dict[str, Any] | None:
     try:
         request = json.loads(raw_request)
@@ -187,7 +262,12 @@ async def _dispatch_jsonrpc(
         if method == "initialize":
             result = {
                 "protocolVersion": params.get("protocolVersion", "2025-06-18"),
-                "capabilities": {"tools": {}},
+                "capabilities": {
+                    "experimental": {},
+                    "prompts": {"listChanged": False},
+                    "resources": {"subscribe": False, "listChanged": False},
+                    "tools": {"listChanged": False},
+                },
                 "serverInfo": {"name": "gdb-mcp", "version": __version__},
                 "instructions": INSTRUCTIONS,
             }
@@ -208,18 +288,45 @@ async def _dispatch_jsonrpc(
             arguments = params.get("arguments")
             if arguments is not None and not isinstance(arguments, dict):
                 raise ValueError("tools/call arguments must be an object")
-            result_obj = await backend.call_tool(name, arguments or {})
+            progress_callback = None
+            meta = params.get("_meta")
+            if isinstance(meta, dict) and isinstance(meta.get("progressToken"), (str, int)):
+                if emit_progress is not None:
+                    outer_token = meta["progressToken"]
+
+                    async def progress_callback(
+                        progress: float,
+                        total: float | None,
+                        message: str | None,
+                    ) -> None:
+                        await emit_progress(outer_token, progress, total, message)
+
+            result_obj = await backend.call_tool(
+                name,
+                arguments or {},
+                progress_callback=progress_callback,
+            )
             result = result_obj.model_dump(
                 mode="json",
                 by_alias=True,
                 exclude_none=True,
             )
         elif method == "resources/list":
-            result = {"resources": []}
+            result = {"resources": list_proxy_resources()}
+        elif method == "resources/read":
+            result = read_proxy_resource(params.get("uri"))
         elif method == "resources/templates/list":
             result = {"resourceTemplates": []}
         elif method == "prompts/list":
-            result = {"prompts": []}
+            result = {"prompts": prompt_index()}
+        elif method == "prompts/get":
+            name = params.get("name")
+            if not isinstance(name, str) or not name:
+                raise ValueError("prompts/get requires a prompt name")
+            arguments = params.get("arguments")
+            if arguments is not None and not isinstance(arguments, dict):
+                raise ValueError("prompts/get arguments must be an object")
+            result = render_prompt(name, arguments)
         elif isinstance(method, str) and method.startswith("notifications/"):
             return None
         else:

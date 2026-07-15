@@ -296,6 +296,25 @@ GDB_MCP_BACKEND_URL=http://127.0.0.1:8000/mcp gdb-mcp
 The default bind address is loopback. Do not expose the HTTP transport to an
 untrusted network without authentication and host isolation.
 
+For a remote deployment, terminate TLS at an authenticated reverse proxy or
+configure a bearer token issued by your authorization server. A non-loopback
+listener is rejected unless all of these are explicit: `--allow-remote`, a
+bearer token, issuer/resource URLs, and an allowed Host-header list. Keep the
+token in a secret manager or environment variable rather than a shell history:
+
+```bash
+export GDB_MCP_HTTP_AUTH_TOKEN="$(your-secret-command)"
+gdb-mcp-backend --transport streamable-http --host 0.0.0.0 --port 8000 \
+  --allow-remote \
+  --http-auth-issuer-url https://login.example.com \
+  --http-auth-resource-url https://debug.example.com/mcp \
+  --http-allowed-host debug.example.com:*
+```
+
+The token must be rotated by its issuer/secret manager. Unsafe tools remain
+disabled; enabling them for a public HTTP listener additionally requires
+`--allow-unsafe-over-http` and should be limited to a dedicated, isolated host.
+
 ## Unsafe Tools
 
 Raw GDB execution, inferior function calls, variable mutation, memory writes, and

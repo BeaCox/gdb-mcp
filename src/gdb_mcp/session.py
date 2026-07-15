@@ -291,6 +291,7 @@ class GdbSession:
     gdbserver_drain_task: asyncio.Task[None] | None = None
     gdbserver_endpoint: str | None = None
     last_stop: dict[str, Any] | None = None
+    applied_profiles: list[dict[str, Any]] = field(default_factory=list)
     state: str = "created"
     last_activity_at: float = field(default_factory=_wall_time)
     _token: int = 1
@@ -517,6 +518,7 @@ class GdbSession:
             "gdbserver_pid": self.gdbserver_process.pid if self.gdbserver_process else None,
             "gdbserver_endpoint": self.gdbserver_endpoint,
             "last_stop": self.last_stop,
+            "applied_profiles": self.applied_profiles,
             "created_at": self.created_at,
             "last_activity_at": self.last_activity_at,
         }
@@ -528,6 +530,17 @@ class GdbSession:
     def recent_commands(self, limit: int = 100) -> list[dict[str, Any]]:
         commands = list(self._recent_commands)
         return commands[-max(0, limit) :]
+
+    def record_profile(self, name: str, configuration: dict[str, Any]) -> None:
+        """Record an initialization profile after all of its commands succeed."""
+
+        self.applied_profiles.append(
+            {
+                "name": name,
+                "configuration": configuration,
+                "applied_at": _wall_time(),
+            }
+        )
 
     async def ensure_started(self) -> None:
         if self.state == "closed":

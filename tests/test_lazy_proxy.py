@@ -13,7 +13,11 @@ from gdb_mcp.lazy import (
     _backend_subprocess_env,
     _dispatch_jsonrpc,
     list_proxy_tools,
+    list_proxy_resources,
+    read_proxy_resource,
 )
+from gdb_mcp.prompts import prompt_index, render_prompt
+from gdb_mcp.resources import RESOURCE_MIME_TYPE, read_reference_resource
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -50,8 +54,10 @@ class _FakeBackend:
         self.exc = exc
         self.calls = []
 
-    async def call_tool(self, name, arguments):
+    async def call_tool(self, name, arguments, progress_callback=None):
         self.calls.append((name, arguments))
+        if progress_callback is not None:
+            await progress_callback(50, 100, "tool dispatched")
         if self.exc is not None:
             raise self.exc
         return _FakeToolResult(self.result)
@@ -146,6 +152,44 @@ class LazyProxyTests(unittest.TestCase):
         self.assertIsNone(backend._session)
         self.assertIsNone(backend._stack)
 
+    def test_static_resources_match_backend_shape_without_backend(self) -> None:
+        resources = list_proxy_resources()
+
+        self.assertEqual(len(resources), 5)
+        self.assertEqual(resources[0]["uri"], "gdb://workflows/basic")
+        self.assertEqual(resources[0]["mimeType"], RESOURCE_MIME_TYPE)
+        self.assertEqual(
+            read_proxy_resource("gdb://workflows/basic"),
+            {
+                "contents": [
+                    {
+                        "uri": "gdb://workflows/basic",
+                        "mimeType": RESOURCE_MIME_TYPE,
+                        "text": json.dumps(
+                            read_reference_resource("gdb://workflows/basic"),
+                            indent=2,
+                        ),
+                    }
+                ]
+            },
+        )
+
+    def test_static_resource_rejects_unknown_uri(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unknown resource"):
+            read_proxy_resource("gdb://workflows/missing")
+
+    def test_static_prompts_are_available_without_backend(self) -> None:
+        prompts = prompt_index()
+
+        self.assertEqual(
+            [prompt["name"] for prompt in prompts],
+            ["debug_local", "triage_core", "debug_remote", "analyze_stripped_binary"],
+        )
+        rendered = render_prompt("debug_remote", {"endpoint": "127.0.0.1:1234"})
+        self.assertIn("Safety boundary:", rendered["messages"][0]["content"]["text"])
+        with self.assertRaisesRegex(ValueError, "Missing required argument"):
+            render_prompt("analyze_stripped_binary")
+
     def test_dispatch_jsonrpc_forwards_tool_calls(self) -> None:
         asyncio.run(self._test_dispatch_jsonrpc_forwards_tool_calls())
 
@@ -166,6 +210,69 @@ class LazyProxyTests(unittest.TestCase):
             },
         )
         self.assertEqual(backend.calls, [("gdb_server_health", {"verbose": True})])
+
+    def test_dispatch_jsonrpc_serves_static_capabilities_without_backend(self) -> None:
+        asyncio.run(self._test_dispatch_jsonrpc_serves_static_capabilities_without_backend())
+
+    async def _test_dispatch_jsonrpc_serves_static_capabilities_without_backend(self) -> None:
+        backend = _FakeBackend()
+        initialized = await _dispatch_jsonrpc(
+            backend,
+            b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
+        )
+        resources = await _dispatch_jsonrpc(
+            backend,
+            b'{"jsonrpc":"2.0","id":2,"method":"resources/list"}',
+        )
+        read = await _dispatch_jsonrpc(
+            backend,
+            b'{"jsonrpc":"2.0","id":3,"method":"resources/read",'
+            b'"params":{"uri":"gdb://workflows/basic"}}',
+        )
+        prompts = await _dispatch_jsonrpc(
+            backend,
+            b'{"jsonrpc":"2.0","id":4,"method":"prompts/list"}',
+        )
+        prompt = await _dispatch_jsonrpc(
+            backend,
+            b'{"jsonrpc":"2.0","id":5,"method":"prompts/get",'
+            b'"params":{"name":"debug_local","arguments":{"program":"/tmp/a"}}}',
+        )
+
+        self.assertEqual(
+            initialized["result"]["capabilities"],
+            {
+                "experimental": {},
+                "prompts": {"listChanged": False},
+                "resources": {"subscribe": False, "listChanged": False},
+                "tools": {"listChanged": False},
+            },
+        )
+        self.assertEqual(resources["result"]["resources"], list_proxy_resources())
+        self.assertEqual(read["result"], read_proxy_resource("gdb://workflows/basic"))
+        self.assertEqual(prompts["result"]["prompts"], prompt_index())
+        self.assertEqual(prompt["result"], render_prompt("debug_local", {"program": "/tmp/a"}))
+        self.assertEqual(backend.calls, [])
+
+    def test_dispatch_jsonrpc_forwards_requested_progress(self) -> None:
+        asyncio.run(self._test_dispatch_jsonrpc_forwards_requested_progress())
+
+    async def _test_dispatch_jsonrpc_forwards_requested_progress(self) -> None:
+        notifications = []
+
+        async def emit_progress(token, progress, total, message):
+            notifications.append((token, progress, total, message))
+
+        response = await _dispatch_jsonrpc(
+            _FakeBackend({"structuredContent": {"ok": True}}),
+            b'{"jsonrpc":"2.0","id":8,"method":"tools/call",'
+            b'"params":{"name":"gdb_continue","arguments":{},'
+            b'"_meta":{"progressToken":"outer-progress"}}}',
+            emit_progress=emit_progress,
+        )
+
+        self.assertEqual(response["result"]["structuredContent"], {"ok": True})
+        self.assertEqual(notifications, [("outer-progress", 50, 100, "tool dispatched")])
 
     def test_dispatch_jsonrpc_rejects_bad_tool_arguments(self) -> None:
         asyncio.run(self._test_dispatch_jsonrpc_rejects_bad_tool_arguments())
@@ -243,6 +350,46 @@ class LazyProxyTests(unittest.TestCase):
         names = {tool.name for tool in tools.tools}
         self.assertIn("gdb_create_session", names)
         self.assertIn("gdb_server_health", names)
+
+    def test_stdio_resources_do_not_start_backend(self) -> None:
+        asyncio.run(self._test_stdio_resources_do_not_start_backend())
+
+    async def _test_stdio_resources_do_not_start_backend(self) -> None:
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=[
+                "-m",
+                "gdb_mcp.lazy",
+                "--backend-command",
+                "/definitely/missing/gdb-mcp-backend",
+            ],
+            env=_source_tree_env(),
+            cwd=ROOT,
+        )
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                initialized = await session.initialize()
+                resources = await session.list_resources()
+                contents = await session.read_resource("gdb://workflows/basic")
+                prompts = await session.list_prompts()
+                prompt = await session.get_prompt("debug_local", {"program": "/tmp/a"})
+
+        self.assertIsNotNone(initialized.capabilities.resources)
+        self.assertIsNotNone(initialized.capabilities.prompts)
+        self.assertEqual(
+            [str(resource.uri) for resource in resources.resources],
+            [resource["uri"] for resource in list_proxy_resources()],
+        )
+        self.assertEqual(contents.contents[0].mimeType, RESOURCE_MIME_TYPE)
+        self.assertEqual(
+            json.loads(contents.contents[0].text),
+            read_reference_resource("gdb://workflows/basic"),
+        )
+        self.assertEqual(
+            [item.name for item in prompts.prompts],
+            [item["name"] for item in prompt_index()],
+        )
+        self.assertIn("Safety boundary:", prompt.messages[0].content.text)
 
     def test_stdio_call_tool_starts_backend_and_forwards(self) -> None:
         asyncio.run(self._test_stdio_call_tool_starts_backend_and_forwards())

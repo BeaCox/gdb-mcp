@@ -25,7 +25,7 @@ Review inputs:
 
 ### P0: Protocol fidelity and deployment safety
 
-- [ ] Make the lazy stdio proxy advertise and serve the same static MCP
+- [x] Make the lazy stdio proxy advertise and serve the same static MCP
   capabilities as the backend without starting GDB.
   - It currently advertises only tools and returns empty `resources/list` and
     `prompts/list` results, even though the backend has reference resources.
@@ -35,7 +35,7 @@ Review inputs:
     read the same static resources/prompts, and a resource/prompt request does
     not create a backend process or GDB session.
 
-- [ ] Harden Streamable HTTP deployment before treating it as a supported remote
+- [x] Harden Streamable HTTP deployment before treating it as a supported remote
   service.
   - Continue binding to loopback by default; reject non-loopback hosts unless an
     explicit acknowledgement is supplied.
@@ -48,14 +48,14 @@ Review inputs:
 
 ### P1: Agent-facing debugging workflows
 
-- [ ] Expose user-invoked MCP prompts for the main safe workflows.
+- [x] Expose user-invoked MCP prompts for the main safe workflows.
   - Start with `debug_local`, `triage_core`, `debug_remote`, and
     `analyze_stripped_binary`; each should state prerequisites, the tool
     sequence, stopping conditions, and the unsafe-mode boundary.
   - Acceptance: `prompts/list` and `prompts/get` contract tests cover required
     and optional arguments, validation, and safe interpolation of user paths.
 
-- [ ] Report bounded MCP progress for long-running operations and preserve the
+- [x] Report bounded MCP progress for long-running operations and preserve the
   existing cancellation guarantees.
   - Cover run/continue, `rr` recording and replay startup, managed gdbserver
     connection, and large external inspection commands when a client supplies a
@@ -65,7 +65,7 @@ Review inputs:
   - Acceptance: transport-level tests observe ordered progress, no notification
     after termination, and no leaked pending command or child process.
 
-- [ ] Add reusable, explicitly security-gated GDB initialization profiles.
+- [x] Add reusable, explicitly security-gated GDB initialization profiles.
   - Support a named/profiled set of startup commands or init files for local,
     core, and remote sessions; treat arbitrary initialization as unsafe because
     GDB command files can execute commands outside the debugger.
@@ -74,7 +74,7 @@ Review inputs:
   - Acceptance: a fixture verifies source-directory, pretty-printer, sysroot,
     and solib-search-path setup; unsafe initialization is denied by default.
 
-- [ ] Export a redacted debugging-session bundle for agent-run diagnosis.
+- [x] Export a redacted debugging-session bundle for agent-run diagnosis.
   - Include immutable session metadata, tool/MI event chronology, selected
     breakpoints, GDB version, and a reproducible command summary; exclude raw
     memory, evaluated values, and environment secrets by default.

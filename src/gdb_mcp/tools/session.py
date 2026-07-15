@@ -7,22 +7,28 @@ from collections.abc import Callable
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
+from ..mi import c_escape
 from ..responses import error_response
 from ..session import (
+    GdbMcpError,
     GdbSession,
     SessionManager,
     gdbserver_target_endpoint,
     launch_gdbserver,
 )
+from .progress import report_progress
 
 ErrorHandler = Callable[[Exception], dict[str, Any]]
 MiWordValidator = Callable[[str, str], None]
+UnsafeToolChecker = Callable[[str], None]
 
 _manager: SessionManager | None = None
 _error_handler: ErrorHandler | None = None
 _require_mi_word: MiWordValidator | None = None
+_require_unsafe_tool: UnsafeToolChecker | None = None
 
 
 def configure(
@@ -30,13 +36,15 @@ def configure(
     manager: SessionManager,
     error: ErrorHandler,
     require_mi_word: MiWordValidator,
+    require_unsafe_tool: UnsafeToolChecker,
 ) -> None:
     """Inject shared server dependencies used by this tool group."""
 
-    global _manager, _error_handler, _require_mi_word
+    global _manager, _error_handler, _require_mi_word, _require_unsafe_tool
     _manager = manager
     _error_handler = error
     _require_mi_word = require_mi_word
+    _require_unsafe_tool = require_unsafe_tool
 
 
 def register_tools(
@@ -51,6 +59,7 @@ def register_tools(
 
     mcp.tool(annotations=session_mutation)(gdb_create_session)
     mcp.tool(annotations=session_mutation)(gdb_connect_gdbserver)
+    mcp.tool(annotations=session_mutation)(gdb_apply_init_profile)
     mcp.tool(annotations=target_execution)(gdb_launch_gdbserver)
     mcp.tool(annotations=read_only)(gdb_list_sessions)
     mcp.tool(annotations=read_only)(gdb_status)
@@ -73,6 +82,29 @@ def _validate_mi_word(name: str, value: str) -> None:
     if _require_mi_word is None:
         raise RuntimeError("session lifecycle tools are not configured")
     _require_mi_word(name, value)
+
+
+def _require_unsafe(name: str) -> None:
+    if _require_unsafe_tool is None:
+        raise RuntimeError("session lifecycle tools are not configured")
+    _require_unsafe_tool(name)
+
+
+def _require_single_line(name: str, value: str) -> None:
+    if not isinstance(value, str) or not value.strip() or "\n" in value or "\r" in value:
+        raise ValueError(f"{name} must be a non-empty single-line string")
+
+
+async def _apply_profile_command(
+    session: GdbSession,
+    command: str,
+    timeout: float,
+) -> dict[str, Any]:
+    result = await session.execute(command, timeout=timeout)
+    payload = result.to_dict(session.output_limit_chars)
+    if not payload["ok"]:
+        raise GdbMcpError(payload["error"] or f"GDB initialization command failed: {command}")
+    return payload
 
 
 async def _terminate_process(process: asyncio.subprocess.Process | None) -> None:
@@ -104,6 +136,91 @@ async def gdb_create_session(
             startup_timeout=startup_timeout,
         )
         return {"ok": True, "session": session.describe()}
+    except Exception as exc:
+        return _error(exc)
+
+
+async def gdb_apply_init_profile(
+    session_id: str,
+    profile: str,
+    source_directories: list[str] | None = None,
+    sysroot: str | None = None,
+    solib_search_path: str | None = None,
+    init_file: str | None = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Apply and record a named initialization profile for an existing session.
+
+    ``source_paths`` and ``remote_paths`` only alter GDB lookup configuration.
+    ``init_file`` runs GDB's ``source`` command and is therefore available only
+    when unsafe mode is explicitly enabled.
+    """
+
+    try:
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        session = await _require_manager().get(session_id)
+        commands: list[dict[str, Any]] = []
+        configuration: dict[str, Any]
+
+        if profile == "source_paths":
+            if not source_directories:
+                raise ValueError("source_paths requires at least one source_directories entry")
+            directories = list(source_directories)
+            for directory in directories:
+                _require_single_line("source_directories entry", directory)
+                commands.append(
+                    await _apply_profile_command(
+                        session,
+                        f"-environment-directory {c_escape(directory)}",
+                        timeout,
+                    )
+                )
+            configuration = {"source_directories": directories}
+        elif profile == "remote_paths":
+            if sysroot is None and solib_search_path is None:
+                raise ValueError("remote_paths requires sysroot or solib_search_path")
+            for setting, value in (
+                ("sysroot", sysroot),
+                ("solib-search-path", solib_search_path),
+            ):
+                if value is None:
+                    continue
+                _require_single_line(setting, value)
+                commands.append(
+                    await _apply_profile_command(
+                        session,
+                        f"-gdb-set {setting} {c_escape(value)}",
+                        timeout,
+                    )
+                )
+            configuration = {
+                "sysroot": sysroot,
+                "solib_search_path": solib_search_path,
+            }
+        elif profile == "init_file":
+            _require_unsafe("gdb_apply_init_profile(profile='init_file')")
+            if init_file is None:
+                raise ValueError("init_file profile requires init_file")
+            _require_single_line("init_file", init_file)
+            commands.append(
+                await _apply_profile_command(
+                    session,
+                    f"-interpreter-exec console {c_escape(f'source {init_file}')}",
+                    timeout,
+                )
+            )
+            configuration = {"init_file": init_file}
+        else:
+            raise ValueError("profile must be one of: source_paths, remote_paths, init_file")
+
+        session.record_profile(profile, configuration)
+        return {
+            "ok": True,
+            "session": session.describe(),
+            "profile": session.applied_profiles[-1],
+            "commands": commands,
+        }
     except Exception as exc:
         return _error(exc)
 
@@ -179,6 +296,7 @@ async def gdb_launch_gdbserver(
     sysroot: str | None = None,
     solib_search_path: str | None = None,
     timeout: float = 15.0,
+    context: Context | None = None,
 ) -> dict[str, Any]:
     """Launch a local gdbserver and connect a new GDB session to it."""
 
@@ -186,6 +304,7 @@ async def gdb_launch_gdbserver(
     gdbserver_process: asyncio.subprocess.Process | None = None
     session: GdbSession | None = None
     try:
+        await report_progress(context, 0, "Launching gdbserver")
         gdbserver_process, banner, drain_task = await launch_gdbserver(
             program=program,
             listen=listen,
@@ -194,6 +313,7 @@ async def gdb_launch_gdbserver(
             gdbserver_path=gdbserver_path,
             startup_timeout=min(timeout, 5.0),
         )
+        await report_progress(context, 40, "gdbserver launched; starting GDB")
         session = await manager.create(
             gdb_path=gdb_path,
             program=program,
@@ -203,6 +323,7 @@ async def gdb_launch_gdbserver(
         session.gdbserver_process = gdbserver_process
         session.gdbserver_drain_task = drain_task
         target = target_endpoint or gdbserver_target_endpoint(listen, banner)
+        await report_progress(context, 70, "Connecting GDB to gdbserver")
         result = await session.connect_gdbserver(
             target,
             extended=extended,
@@ -218,6 +339,7 @@ async def gdb_launch_gdbserver(
                 "gdbserver_output": banner.strip(),
                 "command": result,
             }
+        await report_progress(context, 100, "gdbserver session connected")
         return {
             "ok": result["ok"],
             "session": session.describe(),

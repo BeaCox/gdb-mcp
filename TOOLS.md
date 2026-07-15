@@ -26,6 +26,7 @@ Response-size profiles:
 | Tool | Safety | Main Parameters | Purpose |
 | --- | --- | --- | --- |
 | `gdb_create_session` | Mutation | `program`, `args`, `cwd`, `gdb_path` | Start an isolated GDB process. |
+| `gdb_apply_init_profile` | Mutation | `session_id`, `profile`, profile settings | Apply `source_paths` or `remote_paths`; `init_file` requires unsafe mode. |
 | `gdb_attach` | Execution | `pid`, `program`, `session_id` | Attach to a local Linux process. |
 | `gdb_load_core` | Mutation | `core_path`, `program`, `session_id` | Load a Linux core file. Paths with spaces are quoted safely. |
 | `gdb_connect_gdbserver` | Mutation | `endpoint`, `program`, `extended`, `sysroot`, `solib_search_path` | Connect to an existing remote target. |
@@ -161,6 +162,7 @@ and module-offset oriented.
 | `gdb_recent_events` | Read | `session_id`, `limit`, `cursor`, `page_size` | Return recent MI async/result records. |
 | `gdb_recent_commands` | Read | `session_id`, `limit`, `cursor`, `page_size` | Return recent commands sent to GDB. |
 | `gdb_session_diagnostics` | Read | `session_id` | Return session state plus recent commands/events. |
+| `gdb_export_session_bundle` | Read | `session_id`, `command_limit`, `event_limit`, `include_raw` | Export a redacted diagnostic bundle; raw fields require unsafe mode. |
 | `gdb_command_reference` | Read | none | Return a compact index of safe flows and MCP reference resources. |
 | `gdb_capabilities` | Read | none | Return workflow groups, core and advanced tool profiles, output strategy, safety posture, and reference-project notes. |
 | `gdb_server_health` | Read | none | Report version, dependency paths/versions, safety mode, output limits, and sessions. |
@@ -176,6 +178,18 @@ Clients can list and read these resources without calling a large tool response:
 | `gdb://workflows/binary-analysis` | Stripped-binary and exploit-development oriented inspection flows. |
 | `gdb://commands/mi` | Common GDB/MI commands and the preferred dedicated MCP tools. |
 | `gdb://tools/decision-guide` | Core profile, advanced groups, output strategy, and safety guidance. |
+
+## MCP Prompts
+
+Prompts are user-invoked, safe workflow templates. They treat supplied paths and
+endpoints as literal data and do not enable unsafe tools.
+
+| Prompt | Required argument | Purpose |
+| --- | --- | --- |
+| `debug_local` | `program` | Plan bounded local source-level debugging. |
+| `triage_core` | `core_path` | Plan confidential, read-only core-dump triage. |
+| `debug_remote` | `endpoint` | Plan guarded debugging through gdbserver. |
+| `analyze_stripped_binary` | `file_path` | Plan bounded ELF and runtime binary inspection. |
 
 ## Advanced
 

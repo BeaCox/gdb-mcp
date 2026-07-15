@@ -35,6 +35,12 @@ targets.
 - Run the server as an unprivileged user.
 - Keep HTTP transports bound to `127.0.0.1` unless protected by authentication and
   network policy.
+- A non-loopback HTTP listener requires `--allow-remote`, MCP-compatible bearer
+  authentication, and explicit Host-header allow-listing. Terminate TLS at the
+  public proxy and rotate the bearer token through its issuer or secret manager.
+- Unsafe tools remain disabled on public HTTP listeners unless
+  `--allow-unsafe-over-http` is also explicitly supplied; only use that mode on
+  an isolated host for trusted clients and targets.
 - Use containers, virtual machines, or dedicated hosts for untrusted executables.
 - Do not expose debugging ports to untrusted networks.
 - Set a finite `GDB_MCP_MAX_SESSIONS`.

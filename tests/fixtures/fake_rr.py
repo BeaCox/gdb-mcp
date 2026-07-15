@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 from fake_gdb import main as fake_gdb_main
@@ -24,6 +25,8 @@ def main() -> None:
     if log_path := os.environ.get("FAKE_RR_LOG"):
         Path(log_path).write_text("\n".join(args), encoding="utf-8")
     if args[:1] == ["record"]:
+        if delay := os.environ.get("FAKE_RR_DELAY"):
+            time.sleep(float(delay))
         if os.environ.get("FAKE_RR_FAIL_PERF"):
             print("Permission denied to use 'perf_event_open'")
             print("rr needs /proc/sys/kernel/perf_event_paranoid <= 1, but it is 4.")

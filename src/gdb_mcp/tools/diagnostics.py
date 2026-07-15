@@ -54,6 +54,7 @@ def register_tools(
     mcp.tool(annotations=read_only)(gdb_recent_events)
     mcp.tool(annotations=read_only)(gdb_recent_commands)
     mcp.tool(annotations=read_only)(gdb_session_diagnostics)
+    mcp.tool(annotations=read_only)(gdb_export_session_bundle)
     mcp.tool(annotations=session_mutation)(gdb_close_idle_sessions)
     mcp.tool(annotations=read_only)(gdb_command_reference)
     mcp.tool(annotations=read_only)(gdb_capabilities)
@@ -177,6 +178,169 @@ async def gdb_session_diagnostics(session_id: str) -> dict[str, Any]:
             "recent_commands": session.recent_commands(20),
             "recent_events": session.recent_records(20),
         }
+    except Exception as exc:
+        return _error(exc)
+
+
+def _command_family(command: object) -> str | None:
+    if not isinstance(command, str):
+        return None
+    parts = command.split(maxsplit=1)
+    return parts[0] if parts else None
+
+
+def _command_summary(commands: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep chronology useful while excluding commands and their sensitive arguments."""
+
+    return [
+        {
+            "token": command.get("token"),
+            "command_family": _command_family(command.get("mi_command") or command.get("command")),
+            "wait_for_stop": command.get("wait_for_stop"),
+            "status": command.get("status"),
+            "result_class": command.get("result_class"),
+            "timed_out": command.get("timed_out", False),
+            "interrupted": command.get("interrupted", False),
+            "started_at": command.get("started_at"),
+            "finished_at": command.get("finished_at"),
+            "duration_seconds": command.get("duration_seconds"),
+            "record_count": command.get("record_count", 0),
+            "error_present": bool(command.get("error")),
+        }
+        for command in commands
+    ]
+
+
+def _event_summary(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return MI chronology metadata without raw records, values, or stream text."""
+
+    summaries: list[dict[str, Any]] = []
+    for record in records:
+        results = record.get("results")
+        summaries.append(
+            {
+                "kind": record.get("kind"),
+                "token": record.get("token"),
+                "record_class": record.get("class"),
+                "stream": record.get("stream"),
+                "result_keys": sorted(results) if isinstance(results, dict) else [],
+            }
+        )
+    return summaries
+
+
+def _last_stop_summary(last_stop: object) -> dict[str, Any] | None:
+    if not isinstance(last_stop, dict):
+        return None
+    frame = last_stop.get("frame")
+    frame_summary = None
+    if isinstance(frame, dict):
+        frame_summary = {
+            key: frame.get(key)
+            for key in ("level", "func", "line", "addr")
+            if key in frame
+        }
+    return {
+        "reason": last_stop.get("reason"),
+        "thread_id": last_stop.get("thread-id"),
+        "frame": frame_summary,
+    }
+
+
+async def _breakpoint_summary(session: Any) -> dict[str, Any]:
+    """Read a minimal active-breakpoint inventory without exposing locations."""
+
+    result = await session.execute("-break-list", timeout=2.0)
+    if result.error is not None or result.result_record is None:
+        return {"available": False, "count": 0, "breakpoints": []}
+
+    table = result.result_record.results.get("BreakpointTable")
+    body = table.get("body") if isinstance(table, dict) else []
+    if isinstance(body, dict):
+        body = [body]
+    if not isinstance(body, list):
+        body = []
+    breakpoints = [
+        {
+            "number": item.get("number"),
+            "type": item.get("type"),
+            "enabled": item.get("enabled"),
+            "disposition": item.get("disp"),
+            "hit_count": item.get("times"),
+        }
+        for item in body
+        if isinstance(item, dict)
+    ]
+    return {
+        "available": True,
+        "count": len(breakpoints),
+        "breakpoints": breakpoints,
+    }
+
+
+async def gdb_export_session_bundle(
+    session_id: str,
+    command_limit: int = 100,
+    event_limit: int = 100,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Export a redacted, reproducible diagnostic bundle for one live session.
+
+    ``include_raw`` can expose evaluated values and command arguments, so it is
+    available only when the server was explicitly started in unsafe mode.
+    """
+
+    try:
+        if not 1 <= command_limit <= 200:
+            raise ValueError("command_limit must be between 1 and 200")
+        if not 1 <= event_limit <= 500:
+            raise ValueError("event_limit must be between 1 and 500")
+        if include_raw and not _require_config().allow_unsafe_execute:
+            raise PermissionError("include_raw requires --unsafe or GDB_MCP_ALLOW_UNSAFE=1")
+
+        session = await _require_manager().get(session_id)
+        commands = session.recent_commands(command_limit)
+        events = session.recent_records(event_limit)
+        description = session.describe()
+        gdb_version = await _version_for(session.gdb_path, "--version")
+        bundle: dict[str, Any] = {
+            "schema_version": 1,
+            "exported_at": time.time(),
+            "session": {
+                "session_id": session.session_id,
+                "gdb_path": session.gdb_path,
+                "program": session.program,
+                "cwd": session.cwd,
+                "rr_trace_present": session.rr_trace_dir is not None,
+                "state": description["state"],
+                "alive": description["alive"],
+                "created_at": description["created_at"],
+                "last_activity_at": description["last_activity_at"],
+                "last_stop": _last_stop_summary(description["last_stop"]),
+            },
+            "gdb_version": gdb_version,
+            "breakpoints": await _breakpoint_summary(session),
+            "command_summary": _command_summary(commands),
+            "event_chronology": _event_summary(events),
+            "redaction": {
+                "raw_included": include_raw,
+                "excluded_by_default": [
+                    "inferior arguments",
+                    "environment variables",
+                    "raw commands",
+                    "MI record text and values",
+                    "stream output",
+                    "error messages",
+                ],
+            },
+        }
+        if include_raw:
+            bundle["raw"] = {
+                "session": description,
+                "recent_commands": commands,
+                "recent_events": events,
+            }
+        return {"ok": True, "session_id": session_id, "bundle": bundle}
     except Exception as exc:
         return _error(exc)
 

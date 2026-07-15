@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import shutil  # noqa: F401 - kept for compatibility with callers patching this module
 from contextlib import asynccontextmanager
 from typing import Any
@@ -11,7 +12,9 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from .config import ServerConfig
+from .config import ServerConfig, _env_bool
+from .http_security import configure_http_security
+from .prompts import register_prompts
 from .resources import register_resources
 from .session import CommandResult, GdbMcpError, GdbSession, SessionManager, _truncate_text
 from .tools import binary as _binary_tools
@@ -82,6 +85,7 @@ _run_readelf = _binary_tools._run_readelf
 gdb_close_session = _session_tools.gdb_close_session
 gdb_connect_gdbserver = _session_tools.gdb_connect_gdbserver
 gdb_create_session = _session_tools.gdb_create_session
+gdb_apply_init_profile = _session_tools.gdb_apply_init_profile
 gdb_launch_gdbserver = _session_tools.gdb_launch_gdbserver
 gdb_list_sessions = _session_tools.gdb_list_sessions
 gdb_status = _session_tools.gdb_status
@@ -175,6 +179,7 @@ gdb_recent_commands = _diagnostics_tools.gdb_recent_commands
 gdb_recent_events = _diagnostics_tools.gdb_recent_events
 gdb_server_health = _diagnostics_tools.gdb_server_health
 gdb_session_diagnostics = _diagnostics_tools.gdb_session_diagnostics
+gdb_export_session_bundle = _diagnostics_tools.gdb_export_session_bundle
 
 
 async def _executable_version(path: str | None, *args: str) -> str | None:
@@ -198,6 +203,7 @@ _session_tools.configure(
     manager=manager,
     error=_shared_tools._error,
     require_mi_word=_shared_tools._require_mi_word,
+    require_unsafe_tool=_shared_tools._require_unsafe_tool,
 )
 _session_tools.register_tools(
     mcp,
@@ -249,6 +255,7 @@ _diagnostics_tools.register_tools(
     session_mutation=SESSION_MUTATION,
 )
 register_resources(mcp)
+register_prompts(mcp)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -261,6 +268,45 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind host")
     parser.add_argument("--port", type=int, default=8000, help="HTTP bind port")
+    parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        default=_env_bool("GDB_MCP_ALLOW_REMOTE", False),
+        help="Acknowledge a protected non-loopback HTTP deployment",
+    )
+    parser.add_argument(
+        "--allow-unsafe-over-http",
+        action="store_true",
+        default=_env_bool("GDB_MCP_ALLOW_UNSAFE_OVER_HTTP", False),
+        help="Allow unsafe tools on an authenticated non-loopback HTTP deployment",
+    )
+    parser.add_argument(
+        "--http-auth-token",
+        default=os.getenv("GDB_MCP_HTTP_AUTH_TOKEN"),
+        help="Bearer token for HTTP clients; prefer GDB_MCP_HTTP_AUTH_TOKEN over this flag",
+    )
+    parser.add_argument(
+        "--http-auth-issuer-url",
+        default=os.getenv("GDB_MCP_HTTP_AUTH_ISSUER_URL"),
+        help="OAuth issuer URL for the bearer token's authorization server",
+    )
+    parser.add_argument(
+        "--http-auth-resource-url",
+        default=os.getenv("GDB_MCP_HTTP_AUTH_RESOURCE_URL"),
+        help="Public MCP resource URL, usually https://host.example/mcp",
+    )
+    parser.add_argument(
+        "--http-allowed-host",
+        action="append",
+        default=None,
+        help="Allowed HTTP Host header; may be repeated, supports :* ports",
+    )
+    parser.add_argument(
+        "--http-allowed-origin",
+        action="append",
+        default=None,
+        help="Allowed HTTP Origin header; may be repeated, supports :* ports",
+    )
     parser.add_argument(
         "--unsafe",
         action="store_true",
@@ -284,7 +330,25 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = _build_parser().parse_args()
 
-    runtime_config.allow_unsafe_execute = runtime_config.allow_unsafe_execute or args.unsafe
+    unsafe_enabled = runtime_config.allow_unsafe_execute or args.unsafe
+    try:
+        configure_http_security(
+            mcp,
+            transport=args.transport,
+            host=args.host,
+            allow_remote=args.allow_remote,
+            allow_unsafe_over_http=args.allow_unsafe_over_http,
+            unsafe_enabled=unsafe_enabled,
+            bearer_token=args.http_auth_token,
+            issuer_url=args.http_auth_issuer_url,
+            resource_url=args.http_auth_resource_url,
+            allowed_hosts=args.http_allowed_host or [],
+            allowed_origins=args.http_allowed_origin or [],
+        )
+    except ValueError as exc:
+        _build_parser().error(str(exc))
+
+    runtime_config.allow_unsafe_execute = unsafe_enabled
     runtime_config.max_sessions = max(0, args.max_sessions)
     runtime_config.output_limit_chars = max(10_000, args.output_limit_chars)
     manager.max_sessions = runtime_config.max_sessions

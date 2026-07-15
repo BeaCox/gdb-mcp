@@ -94,10 +94,11 @@ class DistributionDocsTests(unittest.TestCase):
 
     def test_todo_preserves_completed_baseline_and_follow_up_backlog(self) -> None:
         todo = (ROOT / "TODO.md").read_text(encoding="utf-8")
+        follow_up, _ = todo.split("## Completed baseline", maxsplit=1)
 
         self.assertIn("## Follow-up backlog (reviewed 2026-07-15)", todo)
         self.assertIn("## Completed baseline (July 2026)", todo)
-        self.assertIn("- [ ] Make the lazy stdio proxy advertise", todo)
+        self.assertIn("- [ ]", follow_up)
         self.assertIn("- [x] Split `src/gdb_mcp/server.py` by tool domain.", todo)
 
 

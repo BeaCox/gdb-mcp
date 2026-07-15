@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..mi import c_escape
@@ -23,6 +24,7 @@ from .shared import (
     manager,
     runtime_config,
 )
+from .progress import report_progress
 
 _RR_TRACE_RE = re.compile(
     r"trace directory [`'](?P<trace>.+?)[`']",
@@ -225,10 +227,12 @@ async def gdb_run(
     args: list[str] | None = None,
     timeout: float = 30.0,
     auto_interrupt: bool = True,
+    context: Context | None = None,
 ) -> dict[str, Any]:
     """Run or restart the inferior and wait until it stops."""
 
     try:
+        await report_progress(context, 0, "Preparing inferior run")
         session = await manager.get(session_id)
         if args:
             encoded_args = " ".join(c_escape(arg) for arg in args)
@@ -238,12 +242,14 @@ async def gdb_run(
             )
             if not _result(session, args_result)["ok"]:
                 return _result(session, args_result)
+        await report_progress(context, 50, "Run command dispatched")
         result = await session.execute(
             "-exec-run",
             timeout=timeout,
             wait_for_stop=True,
             auto_interrupt=auto_interrupt,
         )
+        await report_progress(context, 100, "Run command finished")
         return _result(session, result)
     except Exception as exc:
         return _error(exc)
@@ -253,17 +259,21 @@ async def gdb_continue(
     session_id: str,
     timeout: float = 30.0,
     auto_interrupt: bool = True,
+    context: Context | None = None,
 ) -> dict[str, Any]:
     """Continue execution and wait until the target stops."""
 
     try:
+        await report_progress(context, 0, "Preparing target continuation")
         session = await manager.get(session_id)
+        await report_progress(context, 50, "Continue command dispatched")
         result = await session.execute(
             "-exec-continue",
             timeout=timeout,
             wait_for_stop=True,
             auto_interrupt=auto_interrupt,
         )
+        await report_progress(context, 100, "Continue command finished")
         return _result(session, result)
     except Exception as exc:
         return _error(exc)
@@ -274,6 +284,7 @@ async def gdb_restart(
     args: list[str] | None = None,
     timeout: float = 30.0,
     auto_interrupt: bool = True,
+    context: Context | None = None,
 ) -> dict[str, Any]:
     """Restart the inferior and wait until it stops."""
 
@@ -282,6 +293,7 @@ async def gdb_restart(
         args=args,
         timeout=timeout,
         auto_interrupt=auto_interrupt,
+        context=context,
     )
 
 
@@ -409,10 +421,12 @@ async def gdb_rr_record(
     trace_dir: str | None = None,
     disable_syscall_buffer: bool = False,
     timeout: float = 120.0,
+    context: Context | None = None,
 ) -> dict[str, Any]:
     """Record one program run with rr and return the trace directory."""
 
     try:
+        await report_progress(context, 0, "Preparing rr recording")
         _require_cli_target("program", program)
         if cwd is not None:
             _require_cli_target("cwd", cwd)
@@ -438,6 +452,7 @@ async def gdb_rr_record(
             stderr=asyncio.subprocess.STDOUT,
             cwd=cwd,
         )
+        await report_progress(context, 50, "rr recording started")
         try:
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
         except asyncio.CancelledError:
@@ -472,6 +487,7 @@ async def gdb_rr_record(
             if perf_details is not None:
                 response.update(perf_details)
             return response
+        await report_progress(context, 100, "rr recording finished")
         return {
             "ok": True,
             "trace_dir": actual_trace_dir,
@@ -488,10 +504,12 @@ async def gdb_start_rr_replay_session(
     cwd: str | None = None,
     rr_path: str = "rr",
     startup_timeout: float = 15.0,
+    context: Context | None = None,
 ) -> dict[str, Any]:
     """Start a GDB/MI session backed by rr replay."""
 
     try:
+        await report_progress(context, 0, "Preparing rr replay session")
         resolved_rr = shutil.which(rr_path)
         if resolved_rr is None:
             raise GdbMcpError(f"rr executable not found: {rr_path}")
@@ -506,6 +524,7 @@ async def gdb_start_rr_replay_session(
             _require_cli_target("cwd", cwd)
         replay_args.append("--")
 
+        await report_progress(context, 50, "Starting rr replay debugger")
         session = await manager.create(
             gdb_path=resolved_rr,
             gdb_args=replay_args,
@@ -513,6 +532,7 @@ async def gdb_start_rr_replay_session(
             rr_trace_dir=trace_dir,
             startup_timeout=startup_timeout,
         )
+        await report_progress(context, 100, "rr replay session started")
         return {
             "ok": True,
             "session": session.describe(),
