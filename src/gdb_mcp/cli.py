@@ -8,6 +8,7 @@ import os
 import sys
 
 from .lazy import LazyBackend, _backend_subprocess_env, _split_env_command, run_stdio
+from .tool_profiles import parse_tool_profile
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -109,11 +110,23 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Approximate backend output limit per tool result",
     )
+    parser.add_argument(
+        "--tool-profile",
+        default=os.getenv("GDB_MCP_TOOL_PROFILE", "full"),
+        help=(
+            "Discovered tools: full (default), core, or "
+            "advanced:<group>[,<group>]"
+        ),
+    )
     return parser
 
 
 def main() -> None:
     args = _build_parser().parse_args()
+    try:
+        profile = parse_tool_profile(args.tool_profile)
+    except ValueError as exc:
+        _build_parser().error(str(exc))
     from .installer import (
         PACKAGE_SOURCE,
         install,
@@ -163,13 +176,16 @@ def main() -> None:
         if args.output_limit_chars is not None:
             command_args.extend(["--output-limit-chars", str(args.output_limit_chars)])
 
+    backend_env = _backend_subprocess_env() or {}
+    backend_env["GDB_MCP_TOOL_PROFILE"] = profile.canonical_name
     backend = LazyBackend(
         command=command,
         args=command_args,
-        env=_backend_subprocess_env(),
+        env=backend_env,
         cwd=args.backend_cwd,
         url=args.backend_url,
         startup_timeout=args.startup_timeout,
+        tool_profile=profile.canonical_name,
     )
     asyncio.run(run_stdio(backend))
 

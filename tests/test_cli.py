@@ -85,6 +85,23 @@ class CliTests(unittest.TestCase):
         self.assertEqual(backend.command, "python")
         self.assertEqual(backend.args, ["-m", "gdb_mcp.server", "--unsafe"])
 
+    def test_tool_profile_is_shared_with_lazy_proxy_and_backend(self) -> None:
+        captured = {}
+
+        async def fake_run_stdio(backend):
+            captured["backend"] = backend
+
+        argv = ["gdb-mcp", "--tool-profile", "advanced:remote-target"]
+        with patch.object(sys, "argv", argv), patch.object(cli, "run_stdio", fake_run_stdio):
+            cli.main()
+
+        backend = captured["backend"]
+        self.assertEqual(backend.tool_profile, "advanced:remote_target")
+        self.assertEqual(
+            backend.env["GDB_MCP_TOOL_PROFILE"],
+            "advanced:remote_target",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

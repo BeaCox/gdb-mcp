@@ -28,6 +28,7 @@ class ServerConfig:
     allow_unsafe_execute: bool = False
     max_sessions: int = 8
     output_limit_chars: int = 100_000
+    tool_profile: str = "full"
 
     @classmethod
     def from_env(cls) -> ServerConfig:
@@ -38,4 +39,5 @@ class ServerConfig:
                 10_000,
                 _env_int("GDB_MCP_OUTPUT_LIMIT_CHARS", 100_000),
             ),
+            tool_profile=os.getenv("GDB_MCP_TOOL_PROFILE", "full"),
         )

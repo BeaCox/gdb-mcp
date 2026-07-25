@@ -21,8 +21,11 @@ def _default_command() -> list[str]:
     return [sys.executable, "-m", "gdb_mcp.lazy"]
 
 
-def _source_tree_env(root: Path) -> dict[str, str]:
+def _source_tree_env(root: Path, *, isolated: bool = False) -> dict[str, str]:
     env = os.environ.copy()
+    if isolated:
+        env.pop("PYTHONPATH", None)
+        return env
     src = root / "src"
     pythonpath = str(src)
     if existing := env.get("PYTHONPATH"):
@@ -31,11 +34,16 @@ def _source_tree_env(root: Path) -> dict[str, str]:
     return env
 
 
-async def _measure(command: list[str], *, root: Path) -> tuple[float, float, int]:
+async def _measure(
+    command: list[str],
+    *,
+    root: Path,
+    isolated: bool,
+) -> tuple[float, float, int]:
     params = StdioServerParameters(
         command=command[0],
         args=command[1:],
-        env=_source_tree_env(root),
+        env=_source_tree_env(root, isolated=isolated),
         cwd=root,
     )
     started = time.perf_counter()
@@ -75,6 +83,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Do not append a missing backend command to prove tools/list stays lazy.",
     )
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument(
+        "--isolated",
+        action="store_true",
+        help="Do not add the source tree to PYTHONPATH (for clean-install checks).",
+    )
     return parser
 
 
@@ -89,7 +102,7 @@ def main() -> int:
 
     try:
         initialize_time, total_time, tool_count = asyncio.run(
-            _measure(command, root=args.root.resolve())
+            _measure(command, root=args.root.resolve(), isolated=args.isolated)
         )
     except Exception as exc:
         print(f"lazy startup check failed: {exc}", file=sys.stderr)

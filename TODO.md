@@ -83,7 +83,7 @@ Review inputs:
   - Acceptance: a bundle can explain a fixture failure without containing a
     planted secret; redaction and opt-in raw fields have dedicated tests.
 
-- [ ] Add an opt-in core tool profile that actually reduces `tools/list`.
+- [x] Add an opt-in core tool profile that actually reduces `tools/list`.
   - The current decision guide identifies core tools, but every client still
     receives the full surface. Keep the complete profile compatible by default
     and allow constrained clients to request core-only discovery.
@@ -93,7 +93,7 @@ Review inputs:
 
 ### P2: Reliability, performance, and release confidence
 
-- [ ] Replace decimal offset cursors with opaque, session/version-bound cursors
+- [x] Replace decimal offset cursors with opaque, session/version-bound cursors
   for mutable or externally produced output.
   - Retain the current pagination shape, but prevent a cursor for one session or
     collection snapshot being reused against another and return a clear stale
@@ -101,7 +101,7 @@ Review inputs:
   - Acceptance: pagination tests cover concurrent mutations, cross-session
     cursor rejection, expiry, and complete traversal without duplicate rows.
 
-- [ ] Make response regression checks token-aware.
+- [x] Make response regression checks token-aware.
   - Continue the existing character limits, then add deterministic serialized
     response-size fixtures and a documented conservative token estimate for
     context, backtrace-all, symbols, readelf, and memory workflows.
@@ -110,7 +110,7 @@ Review inputs:
   - Acceptance: CI fails on budget regressions and reports the largest fixture
     responses in bytes and estimated tokens.
 
-- [ ] Expand live compatibility CI around actual GDB behaviour.
+- [x] Expand live compatibility CI around actual GDB behaviour.
   - Run the smoke and transcript suites on the supported Python/GDB matrix and
     add fixtures for C++, optimized binaries, shared libraries, PIE, remote
     gdbserver, and unavailable optional dependencies.
@@ -119,7 +119,7 @@ Review inputs:
   - Acceptance: CI artifacts identify the GDB build and enabled feature set;
     unsupported combinations skip with an actionable reason.
 
-- [ ] Add MCP interoperability and release-install checks.
+- [x] Add MCP interoperability and release-install checks.
   - Exercise stdio and Streamable HTTP initialization, tools, resources,
     prompts, cancellation, and pagination with a real MCP client harness, not
     only direct FastMCP calls.

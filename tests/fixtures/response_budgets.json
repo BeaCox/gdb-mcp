@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "estimate": {
+    "serialized_format": "compact sorted UTF-8 JSON",
+    "bytes_per_token": 3,
+    "rationale": "Conservative model-independent estimate; typical code-oriented tokenizers average closer to four bytes per token."
+  },
+  "cases": {
+    "context": {
+      "max_bytes": 4000,
+      "max_estimated_tokens": 1334
+    },
+    "backtrace_all": {
+      "max_bytes": 13000,
+      "max_estimated_tokens": 4334
+    },
+    "symbols": {
+      "max_bytes": 26000,
+      "max_estimated_tokens": 8667
+    },
+    "readelf": {
+      "max_bytes": 14000,
+      "max_estimated_tokens": 4667
+    },
+    "memory": {
+      "max_bytes": 11000,
+      "max_estimated_tokens": 3667
+    }
+  }
+}

@@ -263,6 +263,19 @@ Every session has an explicit `session_id`; there is no implicit current session
 The `*_and_context` tools return a compact summary, current frame, backtrace, and
 locals. Pass `include_raw=true` when the raw GDB/MI payload is needed.
 
+The compatible discovery profile is `full`. Constrained clients can publish
+only the 29 common tools, without changing backend behavior for other launches:
+
+```bash
+gdb-mcp --tool-profile core
+# Core plus selected advanced workflows:
+gdb-mcp --tool-profile advanced:binary_analysis,remote_target
+```
+
+`GDB_MCP_TOOL_PROFILE` provides the same setting. The lazy proxy forwards the
+profile to a backend it starts. When using `GDB_MCP_BACKEND_URL`, configure the
+remote backend with the same profile.
+
 See [examples/README.md](examples/README.md) for a Linux walkthrough and
 [TOOLS.md](TOOLS.md) for the full tool reference.
 

@@ -1,5 +1,8 @@
 """GDB session lifecycle and asynchronous MI command routing."""
 
+# Public debugger APIs intentionally expose numeric timeouts.
+# ruff: noqa: ASYNC109
+
 from __future__ import annotations
 
 import asyncio
@@ -11,6 +14,8 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
+
+from anyio import CancelScope
 
 from .mi import MIParseError, MIRecord, c_escape, parse_mi_record, quote_cli_command
 
@@ -292,6 +297,7 @@ class GdbSession:
     gdbserver_endpoint: str | None = None
     last_stop: dict[str, Any] | None = None
     applied_profiles: list[dict[str, Any]] = field(default_factory=list)
+    pagination_version: int = 0
     state: str = "created"
     last_activity_at: float = field(default_factory=_wall_time)
     _token: int = 1
@@ -519,6 +525,7 @@ class GdbSession:
             "gdbserver_endpoint": self.gdbserver_endpoint,
             "last_stop": self.last_stop,
             "applied_profiles": self.applied_profiles,
+            "pagination_version": self.pagination_version,
             "created_at": self.created_at,
             "last_activity_at": self.last_activity_at,
         }
@@ -541,6 +548,11 @@ class GdbSession:
                 "applied_at": _wall_time(),
             }
         )
+
+    def invalidate_pagination(self) -> None:
+        """Invalidate cursors for output tied to mutable inferior state."""
+
+        self.pagination_version += 1
 
     async def ensure_started(self) -> None:
         if self.state == "closed":
@@ -629,9 +641,15 @@ class GdbSession:
                 status="cancelled",
                 error="Command task cancelled",
             )
-            if wait_for_stop and (sent or pending.saw_running) and self.is_alive():
+            if (
+                wait_for_stop
+                and display_command != "-exec-interrupt"
+                and (sent or pending.saw_running)
+                and self.is_alive()
+            ):
                 try:
-                    await self.interrupt(timeout=1.0)
+                    with CancelScope(shield=True):
+                        await self.interrupt(timeout=1.0)
                 except Exception:
                     pass
             raise
@@ -721,6 +739,7 @@ class GdbSession:
 
         if record.kind == "exec" and record.record_class == "running":
             self.state = "running"
+            self.invalidate_pagination()
             for pending in self._pending.values():
                 pending.saw_running = True
             return
@@ -728,6 +747,7 @@ class GdbSession:
         if record.kind == "exec" and record.record_class == "stopped":
             self.state = "stopped"
             self.last_stop = record.results or {}
+            self.invalidate_pagination()
             for pending in list(self._pending.values()):
                 if pending.wait_for_stop:
                     pending.stopped_record = record

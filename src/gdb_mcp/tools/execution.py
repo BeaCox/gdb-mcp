@@ -216,6 +216,7 @@ async def gdb_execute(
             wait_for_stop=wait_for_stop,
             auto_interrupt=auto_interrupt,
         )
+        session.invalidate_pagination()
         return _result(session, result)
     except Exception as exc:
         return _error(exc)

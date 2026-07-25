@@ -80,6 +80,7 @@ from gdb_mcp.server import (
     gdb_rva_info,
     gdb_search_memory,
     gdb_select_thread,
+    gdb_server_health,
     gdb_session_diagnostics,
     gdb_set_breakpoint,
     gdb_set_remote_paths,
@@ -106,6 +107,25 @@ from gdb_mcp.session import CommandResult, GdbSession
 
 
 class ServerContractTests(unittest.TestCase):
+    def test_health_reports_unavailable_optional_dependencies(self) -> None:
+        async def check() -> None:
+            with patch("gdb_mcp.tools.diagnostics.shutil.which", return_value=None):
+                health = await gdb_server_health()
+
+            self.assertTrue(health["ok"], health)
+            self.assertFalse(health["gdb_available"])
+            self.assertFalse(health["optional_dependencies"]["gdbserver"]["available"])
+            self.assertFalse(health["optional_dependencies"]["rr"]["available"])
+            self.assertTrue(
+                all(
+                    not feature["supported"]
+                    and "not available" in feature["reason"]
+                    for feature in health["gdb_features"].values()
+                )
+            )
+
+        asyncio.run(check())
+
     def test_shared_response_helpers_cover_common_shapes(self) -> None:
         session = GdbSession(session_id="response-test", output_limit_chars=2_000)
         result = CommandResult(
@@ -534,19 +554,27 @@ class ServerContractTests(unittest.TestCase):
             self.assertGreater(memory_summary["returned_byte_count"], 0)
             self.assertNotIn("results", memory_summary)
 
+            first_memory_page = await gdb_read_memory(
+                session_id,
+                "$sp",
+                64,
+                output="summary",
+                page_size=8,
+            )
             memory_page = await gdb_read_memory(
                 session_id,
                 "$sp",
                 64,
                 output="summary",
-                cursor="8",
+                cursor=first_memory_page["pagination"]["next_cursor"],
                 page_size=8,
             )
             self.assertTrue(memory_page["ok"], memory_page)
             self.assertEqual(memory_page["read_address"], "($sp)+8")
             self.assertEqual(memory_page["requested_page_bytes"], 8)
-            self.assertEqual(memory_page["pagination"]["cursor"], "8")
-            self.assertEqual(memory_page["pagination"]["next_cursor"], "16")
+            self.assertEqual(memory_page["pagination"]["page_start"], 8)
+            self.assertEqual(memory_page["pagination"]["page_end"], 16)
+            self.assertTrue(memory_page["pagination"]["cursor"].startswith("gdb1."))
 
             symbols_summary = await gdb_symbols(
                 session_id,
@@ -562,22 +590,21 @@ class ServerContractTests(unittest.TestCase):
 
             recent_commands = await gdb_recent_commands(
                 session_id,
-                cursor="0",
                 page_size=2,
             )
             self.assertTrue(recent_commands["ok"], recent_commands)
             self.assertEqual(recent_commands["command_count"], 2)
-            self.assertEqual(recent_commands["pagination"]["cursor"], "0")
+            self.assertEqual(recent_commands["pagination"]["page_start"], 0)
+            self.assertTrue(recent_commands["pagination"]["cursor"].startswith("gdb1."))
             self.assertTrue(recent_commands["pagination"]["has_more"])
 
             recent_events = await gdb_recent_events(
                 session_id,
-                cursor="0",
                 page_size=2,
             )
             self.assertTrue(recent_events["ok"], recent_events)
             self.assertEqual(recent_events["event_count"], 2)
-            self.assertEqual(recent_events["pagination"]["cursor"], "0")
+            self.assertEqual(recent_events["pagination"]["page_start"], 0)
 
             invalid_profile = await gdb_read_memory(
                 session_id,
@@ -1227,18 +1254,24 @@ class ServerContractTests(unittest.TestCase):
             )
             fake_readelf.chmod(0o755)
             with patch("gdb_mcp.server.shutil.which", return_value=str(fake_readelf)):
+                first_page = await _run_readelf(
+                    "/tmp/sample",
+                    ["-S"],
+                    timeout=1.0,
+                    page_size=1,
+                )
                 paged = await _run_readelf(
                     "/tmp/sample",
                     ["-S"],
                     timeout=1.0,
-                    cursor="1",
+                    cursor=first_page["stdout_pagination"]["next_cursor"],
                     page_size=2,
                 )
 
         self.assertTrue(paged["ok"])
         self.assertEqual(paged["stdout"], "line-1\nline-2")
-        self.assertEqual(paged["stdout_pagination"]["cursor"], "1")
-        self.assertEqual(paged["stdout_pagination"]["next_cursor"], "3")
+        self.assertEqual(paged["stdout_pagination"]["page_start"], 1)
+        self.assertEqual(paged["stdout_pagination"]["page_end"], 3)
 
     def test_readelf_separates_options_from_file_path(self) -> None:
         asyncio.run(self._test_readelf_separates_options_from_file_path())

@@ -8,6 +8,8 @@ Security guidance for all workflows lives in [SECURITY.md](../SECURITY.md).
 
 ## Local Source Debugging
 
+Tool profile: `core`.
+
 Use when a local executable has symbols or source paths.
 
 Tool sequence:
@@ -26,6 +28,8 @@ Security tradeoff: the inferior executes with the server account permissions.
 Use a dedicated user, container, or VM for untrusted programs.
 
 ## Stripped Binary Analysis
+
+Tool profile: `advanced:binary_analysis`.
 
 Use when source and symbols are sparse and address-oriented context matters.
 
@@ -46,6 +50,8 @@ Prefer `summary` output before raw memory, symbol, or readelf payloads.
 
 ## Core Dump Triage
 
+Tool profile: `full` (uses path, all-thread, and shared-library helpers outside core).
+
 Use when investigating a post-mortem Linux core file.
 
 Tool sequence:
@@ -64,6 +70,8 @@ Security tradeoff: loading a core does not run the target, but core files can
 contain secrets. Keep copied production cores in isolated storage.
 
 ## Remote Gdbserver
+
+Tool profile: `advanced:remote_target`.
 
 Use when connecting to an existing `gdbserver` endpoint.
 
@@ -84,6 +92,8 @@ or tunnel endpoints and use host firewall policy.
 
 ## Managed Gdbserver
 
+Tool profile: `advanced:remote_target`.
+
 Use when the MCP server should launch local `gdbserver` and connect GDB to it.
 
 Tool sequence:
@@ -101,6 +111,8 @@ Security tradeoff: this starts another local process. Use a dedicated user or
 container for untrusted binaries.
 
 ## Attach And Detach
+
+Tool profile: `full` (`gdb_detach` is outside the constrained core surface).
 
 Use when a process is already running under the same Linux permission boundary.
 
@@ -120,6 +132,8 @@ the server as a dedicated user with only the processes it should debug.
 
 ## Reverse Debugging
 
+Tool profile: `advanced:reverse_debugging`.
+
 Use when reproducing or replaying a failure requires time travel.
 
 Tool sequence:
@@ -138,6 +152,8 @@ Security tradeoff: rr records can contain memory and system interaction data.
 Store traces like sensitive debugging artifacts.
 
 ## Unsafe Mode
+
+Tool profile: `advanced:unsafe`; also enable unsafe execution explicitly.
 
 Use only when explicit target mutation or raw GDB commands are required.
 

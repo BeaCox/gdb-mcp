@@ -59,6 +59,77 @@
     "optionalDebuggers": [
       "rr"
     ],
+    "prompts": [
+      "debug_local",
+      "triage_core",
+      "debug_remote",
+      "analyze_stripped_binary"
+    ],
+    "toolProfiles": {
+      "default": "full",
+      "configuration": "--tool-profile or GDB_MCP_TOOL_PROFILE",
+      "coreTools": [
+        "gdb_create_session",
+        "gdb_attach",
+        "gdb_load_core",
+        "gdb_list_sessions",
+        "gdb_status",
+        "gdb_close_session",
+        "gdb_set_breakpoint",
+        "gdb_delete_breakpoint",
+        "gdb_list_breakpoints",
+        "gdb_run_and_context",
+        "gdb_continue_and_context",
+        "gdb_step_and_context",
+        "gdb_next_and_context",
+        "gdb_interrupt",
+        "gdb_context",
+        "gdb_current_location",
+        "gdb_backtrace",
+        "gdb_threads",
+        "gdb_select_thread",
+        "gdb_locals",
+        "gdb_eval_expression",
+        "gdb_read_register",
+        "gdb_registers",
+        "gdb_source",
+        "gdb_disassemble_around_pc",
+        "gdb_read_memory",
+        "gdb_capabilities",
+        "gdb_server_health",
+        "gdb_command_reference"
+      ],
+      "snapshots": {
+        "core": {
+          "toolCount": 29,
+          "sha256": "dd909becfbc450f3b79030ae32473eb3c4789278dc1f4496a1299e3551600b79"
+        },
+        "advanced:binary_analysis": {
+          "toolCount": 43,
+          "sha256": "7552ff5d28fdf5ed183d5a8641402a21e9ebeb6b5638ab01265bb803344bf9a6"
+        },
+        "advanced:reverse_debugging": {
+          "toolCount": 42,
+          "sha256": "1fec47b3585e7a81b5865a73570f4f6126e0e89eacbbd188dacd37f698b31fcf"
+        },
+        "advanced:remote_target": {
+          "toolCount": 34,
+          "sha256": "fbda4481b91c8dfb17438ceef8d9579f104c9f73eeb41008b2e394bded461b7f"
+        },
+        "advanced:diagnostics": {
+          "toolCount": 34,
+          "sha256": "6c2772c6003f38a10bb901ea7f7e9e794e9e13e34ffd533320dc593c0e768634"
+        },
+        "advanced:unsafe": {
+          "toolCount": 34,
+          "sha256": "5ec82c3562f1c76555700a7c621d91e7792645dca80e7c6c900ea73bac2ed891"
+        },
+        "full": {
+          "toolCount": 98,
+          "sha256": "eebdcb0bd3bee6b9e8f1c40011ed601bd6b7ff0ba381c26a1d87867cbf0e9fda"
+        }
+      }
+    },
     "resources": [
       "gdb://workflows/basic",
       "gdb://workflows/core-dump",

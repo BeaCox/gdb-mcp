@@ -8,10 +8,11 @@ tests should pass everywhere the Python package supports.
 | --- | --- | --- |
 | Python | 3.10, 3.11, 3.12, 3.13 | CI runs the full test suite on these versions. |
 | Operating system | Linux | Local attach, core, process, and gdbserver workflows rely on Linux GDB behavior. |
-| GDB | Distro GDB with MI support | CI installs the Ubuntu `gdb` package. The fake-GDB tests cover protocol behavior without a host GDB. |
+| GDB | Ubuntu 22.04 and 24.04 distro builds with MI support | CI runs MI transcript and live smoke suites on both builds and uploads a feature report. The fake-GDB tests cover protocol behavior without a host GDB. |
 | gdbserver | Optional | Required only for remote-target and managed-gdbserver workflows. |
 | rr | Optional | Required only for `gdb_rr_record` and replay workflows. Tests skip cleanly when unavailable. |
 | C compiler | Optional for smoke tests | CI uses `gcc` to build fixture programs. |
+| C++ compiler | Optional for smoke tests | CI debugs a namespaced C++ fixture. |
 | macOS | Unsupported for local target control | The Python package may import, but local Linux debugging workflows are not supported. |
 | Windows | Unsupported | GDB process control, attach, and core workflows are not tested. |
 
@@ -24,6 +25,18 @@ tests should pass everywhere the Python package supports.
 - Remote targets that require authentication or transport setup outside GDB's
   `target remote` and `target extended-remote` forms.
 - Non-Linux core files.
+
+## Feature Gates
+
+`gdb_server_health` and `scripts/probe_gdb_features.py` execute bounded probes
+instead of inferring support from the version string. Reports currently cover
+MI2, GDB Python, `record full`, reverse execution, `gcore`, extended remote
+targets, and debuginfod. A missing feature includes the probe's first error line
+so skips and deployment diagnostics are actionable.
+
+Live compatibility fixtures cover C, C++, optimized PIE executables, shared
+libraries, attach, core files, local gdbserver, and unavailable optional
+dependencies. CI publishes `gdb-features.json` for each Ubuntu/Python pair.
 
 ## Native Dependencies
 

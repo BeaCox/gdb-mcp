@@ -12,8 +12,9 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from ..compatibility import probe_gdb_features
 from ..config import ServerConfig
-from ..pagination import paginate_items, pagination_metadata
+from ..pagination import paginate_items
 from ..resources import command_reference_index, resource_index, tool_profile
 from ..responses import error_response
 from ..session import SessionManager
@@ -98,23 +99,19 @@ async def gdb_recent_events(
             raise ValueError("limit must be between 1 and 500")
         session = await _require_manager().get(session_id)
         all_events = session.recent_records(500)
-        if cursor is None and page_size is None:
-            events = all_events[-limit:]
-            page_start = max(0, len(all_events) - len(events))
-            pagination = pagination_metadata(
-                start=page_start,
-                end=len(all_events),
-                total_count=len(all_events),
-                page_size=limit,
-            )
-        else:
-            events, pagination = paginate_items(
-                all_events,
-                cursor=cursor,
-                page_size=page_size,
-                default_page_size=limit,
-                max_page_size=500,
-            )
+        events, pagination = paginate_items(
+            all_events,
+            cursor=cursor,
+            page_size=page_size,
+            default_page_size=limit,
+            max_page_size=500,
+            cursor_scope=f"session:{session_id}:recent-events",
+            initial_offset=(
+                max(0, len(all_events) - limit)
+                if cursor is None and page_size is None
+                else 0
+            ),
+        )
         return {
             "ok": True,
             "session_id": session_id,
@@ -139,23 +136,19 @@ async def gdb_recent_commands(
             raise ValueError("limit must be between 1 and 200")
         session = await _require_manager().get(session_id)
         all_commands = session.recent_commands(200)
-        if cursor is None and page_size is None:
-            commands = all_commands[-limit:]
-            page_start = max(0, len(all_commands) - len(commands))
-            pagination = pagination_metadata(
-                start=page_start,
-                end=len(all_commands),
-                total_count=len(all_commands),
-                page_size=limit,
-            )
-        else:
-            commands, pagination = paginate_items(
-                all_commands,
-                cursor=cursor,
-                page_size=page_size,
-                default_page_size=limit,
-                max_page_size=200,
-            )
+        commands, pagination = paginate_items(
+            all_commands,
+            cursor=cursor,
+            page_size=page_size,
+            default_page_size=limit,
+            max_page_size=200,
+            cursor_scope=f"session:{session_id}:recent-commands",
+            initial_offset=(
+                max(0, len(all_commands) - limit)
+                if cursor is None and page_size is None
+                else 0
+            ),
+        )
         return {
             "ok": True,
             "session_id": session_id,
@@ -451,6 +444,7 @@ async def gdb_capabilities() -> dict[str, Any]:
             },
         },
         "resources": resource_index(),
+        "active_tool_profile": runtime_config.tool_profile,
         "tool_profiles": tool_profile(),
         "workflows": {
             "local_program": [
@@ -550,7 +544,8 @@ async def gdb_capabilities() -> dict[str, Any]:
                 "gdb_binary_summary",
             ],
             "pagination": {
-                "cursor_format": "non-negative decimal offset",
+                "cursor_format": "opaque session/query/snapshot-bound token",
+                "cursor_ttl_seconds": 900,
                 "fields": ["cursor", "page_size", "pagination.next_cursor"],
                 "tools": [
                     "gdb_symbols",
@@ -590,10 +585,11 @@ async def gdb_server_health() -> dict[str, Any]:
     gdb_path = shutil.which("gdb")
     gdbserver_path = shutil.which("gdbserver")
     rr_path = shutil.which("rr")
-    gdb_version, gdbserver_version, rr_version = await asyncio.gather(
+    gdb_version, gdbserver_version, rr_version, gdb_features = await asyncio.gather(
         _version_for(gdb_path, "--version"),
         _version_for(gdbserver_path, "--version"),
         _version_for(rr_path, "--version"),
+        probe_gdb_features(gdb_path),
     )
     sessions = await _require_manager().list()
     return {
@@ -603,6 +599,7 @@ async def gdb_server_health() -> dict[str, Any]:
         "gdb_available": gdb_path is not None,
         "gdb_path": gdb_path,
         "gdb_version": gdb_version,
+        "gdb_features": gdb_features,
         "required_dependencies": {
             "gdb": {
                 "available": gdb_path is not None,

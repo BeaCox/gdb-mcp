@@ -278,10 +278,12 @@ async def gdb_call_function(
         if not expression.strip():
             raise ValueError("expression must not be empty")
         session = await manager.get(session_id)
-        return _result(
+        payload = _result(
             session,
             await session.execute(_cli_print_command(expression), timeout=timeout),
         )
+        session.invalidate_pagination()
+        return payload
     except Exception as exc:
         return _error(exc)
 
@@ -301,10 +303,12 @@ async def gdb_set_variable(
         if not expression.strip() or not value.strip():
             raise ValueError("expression and value must not be empty")
         session = await manager.get(session_id)
-        return _result(
+        payload = _result(
             session,
             await session.execute(_cli_set_var_command(expression, value), timeout=timeout),
         )
+        session.invalidate_pagination()
+        return payload
     except Exception as exc:
         return _error(exc)
 
@@ -744,6 +748,7 @@ async def gdb_thread_apply_all_backtrace(
             page_size=page_size,
             default_page_size=200,
             max_page_size=2_000,
+            cursor_scope=f"session:{session_id}:thread-all-backtrace:{max_frames}",
         )
         payload = {
             **payload,
@@ -753,6 +758,8 @@ async def gdb_thread_apply_all_backtrace(
         }
         if output != "raw":
             payload["console"] = "\n".join(lines)
+        if output == "structured":
+            payload.pop("console", None)
         return _profile_command_payload(payload, output)
     except Exception as exc:
         return _error(exc)
@@ -902,6 +909,8 @@ async def gdb_read_memory(
             page_size=page_size,
             default_page_size=count,
             max_page_size=1_048_576,
+            cursor_scope=f"session:{session_id}:memory:{address}:{count}",
+            snapshot=str(session.pagination_version),
         )
         read_count = max(0, page_end - page_start)
         read_address = f"({address})+{page_start}" if page_start else address
@@ -961,13 +970,15 @@ async def gdb_write_memory(
         _require_cli_target("address", address)
         data = _require_hex_bytes("data_hex", data_hex)
         session = await manager.get(session_id)
-        return _result(
+        payload = _result(
             session,
             await session.execute(
                 _mi_write_memory_bytes_command(address, data),
                 timeout=10.0,
             ),
         )
+        session.invalidate_pagination()
+        return payload
     except Exception as exc:
         return _error(exc)
 
@@ -1083,6 +1094,7 @@ async def gdb_memory_mappings(
             page_size=page_size,
             default_page_size=200,
             max_page_size=2_000,
+            cursor_scope=f"session:{session_id}:memory-mappings",
         )
         payload = {
             **payload,
@@ -1092,6 +1104,8 @@ async def gdb_memory_mappings(
         }
         if output != "raw":
             payload["console"] = "\n".join(lines)
+        if output == "structured":
+            payload.pop("console", None)
         return _profile_command_payload(payload, output)
     except Exception as exc:
         return _error(exc)

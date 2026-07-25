@@ -17,6 +17,7 @@ from .http_security import configure_http_security
 from .prompts import register_prompts
 from .resources import register_resources
 from .session import CommandResult, GdbMcpError, GdbSession, SessionManager, _truncate_text
+from .tool_profiles import parse_tool_profile
 from .tools import binary as _binary_tools
 from .tools import breakpoints as _breakpoint_tools
 from .tools import diagnostics as _diagnostics_tools
@@ -258,6 +259,19 @@ register_resources(mcp)
 register_prompts(mcp)
 
 
+async def apply_tool_profile(profile_value: str) -> str:
+    """Restrict the registered tool surface and return the canonical profile name."""
+
+    profile = parse_tool_profile(profile_value)
+    tools = await mcp.list_tools()
+    allowed = profile.allowed_names({tool.name for tool in tools})
+    for tool in tools:
+        if tool.name not in allowed:
+            mcp.remove_tool(tool.name)
+    runtime_config.tool_profile = profile.canonical_name
+    return profile.canonical_name
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Full gdb-mcp backend server")
     parser.add_argument(
@@ -324,6 +338,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default=runtime_config.output_limit_chars,
         help="Approximate output limit per tool result",
     )
+    parser.add_argument(
+        "--tool-profile",
+        default=runtime_config.tool_profile,
+        help=(
+            "Discovered tools: full (default), core, or "
+            "advanced:<group>[,<group>]"
+        ),
+    )
     return parser
 
 
@@ -332,6 +354,7 @@ def main() -> None:
 
     unsafe_enabled = runtime_config.allow_unsafe_execute or args.unsafe
     try:
+        asyncio.run(apply_tool_profile(args.tool_profile))
         configure_http_security(
             mcp,
             transport=args.transport,

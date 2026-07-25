@@ -69,6 +69,7 @@ class LazyProxyTests(unittest.TestCase):
             "GDB_MCP_ALLOW_UNSAFE",
             "GDB_MCP_MAX_SESSIONS",
             "GDB_MCP_OUTPUT_LIMIT_CHARS",
+            "GDB_MCP_TOOL_PROFILE",
             "PYTHONPATH",
         )
         previous = {name: os.environ.get(name) for name in names}
@@ -80,6 +81,7 @@ class LazyProxyTests(unittest.TestCase):
             os.environ["GDB_MCP_ALLOW_UNSAFE"] = "1"
             os.environ["GDB_MCP_MAX_SESSIONS"] = "2"
             os.environ["GDB_MCP_OUTPUT_LIMIT_CHARS"] = "12345"
+            os.environ["GDB_MCP_TOOL_PROFILE"] = "core"
             os.environ["PYTHONPATH"] = "/tmp/src"
 
             self.assertEqual(
@@ -88,6 +90,7 @@ class LazyProxyTests(unittest.TestCase):
                     "GDB_MCP_ALLOW_UNSAFE": "1",
                     "GDB_MCP_MAX_SESSIONS": "2",
                     "GDB_MCP_OUTPUT_LIMIT_CHARS": "12345",
+                    "GDB_MCP_TOOL_PROFILE": "core",
                     "PYTHONPATH": "/tmp/src",
                 },
             )

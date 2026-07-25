@@ -35,8 +35,14 @@ jobs:
       - name: Check release version references
         run: uv run python scripts/sync_release_version.py --check
 
+      - name: Validate registry discovery metadata
+        run: uv run python scripts/validate_registry_metadata.py
+
       - name: Check lazy MCP startup
         run: uv run python scripts/check_lazy_startup.py --budget 5 --initialize-budget 3
+
+      - name: Check response budgets
+        run: uv run python scripts/check_response_budgets.py
 
       - name: Test
         run: uv run pytest --cov=gdb_mcp --cov-report=term-missing
@@ -52,3 +58,48 @@ jobs:
 
       - name: Build
         run: uv build
+
+      - name: Check clean wheel installation
+        run: uv run python scripts/check_release_install.py dist/*.whl
+
+  gdb-compatibility:
+    runs-on: ubuntu-latest
+    container: ubuntu:${{ matrix.ubuntu-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ubuntu-version: "22.04"
+            python-version: "3.10"
+          - ubuntu-version: "24.04"
+            python-version: "3.12"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install native compatibility dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            binutils ca-certificates g++ gcc gdb gdbserver
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync --extra dev
+
+      - name: Record GDB build and feature gates
+        run: uv run python scripts/probe_gdb_features.py --output gdb-features.json
+
+      - name: Run MI transcript and live GDB suites
+        run: uv run pytest -ra tests/test_mi.py tests/test_session_smoke.py
+
+      - name: Upload GDB feature report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: gdb-features-ubuntu-${{ matrix.ubuntu-version }}-py${{ matrix.python-version }}
+          path: gdb-features.json

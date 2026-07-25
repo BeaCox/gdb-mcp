@@ -20,6 +20,22 @@ Response-size profiles:
 - Existing `include_raw=true` context arguments are treated like `output="raw"`.
 - Large-output tools that accept `cursor` and `page_size` return a `pagination`
   object with `next_cursor` when another page is available.
+- Cursors are opaque, expire after 15 minutes, and are bound to the session,
+  query, and collection snapshot. Restart pagination after a stale-cursor error.
+
+Tool discovery profiles:
+
+- `full` is the compatible default and publishes every tool.
+- `core` publishes the 29-tool common local-debugging surface.
+- `advanced:<group>[,<group>]` publishes core plus selected `binary_analysis`,
+  `reverse_debugging`, `remote_target`, `diagnostics`, or `unsafe` groups.
+- Select a profile with `--tool-profile` or `GDB_MCP_TOOL_PROFILE`. The lazy
+  proxy and spawned backend inherit the same selection.
+
+Response budget CI serializes compact sorted UTF-8 JSON and estimates one token
+per three bytes. This is deliberately more conservative than the common
+four-characters-per-token heuristic. Run `uv run python
+scripts/check_response_budgets.py` to report the largest regression fixtures.
 
 ## Session Management
 

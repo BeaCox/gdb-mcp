@@ -33,6 +33,7 @@ from gdb_mcp.server import (
     gdb_set_breakpoint,
     gdb_set_remote_paths,
     gdb_set_watchpoint,
+    gdb_shared_libraries,
     gdb_source,
     gdb_stack_arguments,
     gdb_start_rr_replay_session,
@@ -46,6 +47,9 @@ from gdb_mcp.session import SessionManager
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "tests" / "fixtures" / "sample.c"
 ATTACH_TARGET = ROOT / "tests" / "fixtures" / "attach_target.c"
+COMPAT_CPP = ROOT / "tests" / "fixtures" / "compat_cpp.cpp"
+COMPAT_SHARED = ROOT / "tests" / "fixtures" / "compat_shared.c"
+COMPAT_PIE = ROOT / "tests" / "fixtures" / "compat_pie.c"
 
 
 async def compile_fixture(test: unittest.TestCase, source: Path, binary: Path) -> None:
@@ -66,6 +70,124 @@ async def compile_fixture(test: unittest.TestCase, source: Path, binary: Path) -
 
 
 class GdbSessionSmokeTests(unittest.TestCase):
+    def test_cpp_debugging_smoke(self) -> None:
+        if shutil.which("c++") is None:
+            self.skipTest("c++ is not available; install a C++ compiler")
+        if shutil.which("gdb") is None:
+            self.skipTest("gdb is not available")
+
+        asyncio.run(self._run_cpp_smoke())
+
+    async def _run_cpp_smoke(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "compat-cpp"
+            compiler = await asyncio.create_subprocess_exec(
+                "c++",
+                "-g",
+                "-gdwarf-4",
+                "-O0",
+                str(COMPAT_CPP),
+                "-o",
+                str(binary),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await compiler.communicate()
+            if compiler.returncode != 0:
+                self.fail(stderr.decode(errors="replace"))
+
+            created = await gdb_create_session(program=str(binary), startup_timeout=10)
+            self.assertTrue(created["ok"], created)
+            session_id = created["session"]["session_id"]
+            try:
+                breakpoint = await gdb_set_breakpoint(session_id, "compat::add")
+                self.assertTrue(breakpoint["ok"], breakpoint)
+                context = await gdb_run_and_context(session_id, timeout=10.0)
+                self.assertTrue(context["ok"], context)
+                self.assertIn("compat::add", context["location"]["func"])
+                evaluated = await gdb_eval_expression(session_id, "left + right")
+                self.assertTrue(evaluated["ok"], evaluated)
+                self.assertEqual(evaluated["results"]["value"], "42")
+            finally:
+                await gdb_close_session(session_id)
+
+    def test_optimized_pie_and_shared_library_smoke(self) -> None:
+        if shutil.which("cc") is None:
+            self.skipTest("cc is not available")
+        if shutil.which("gdb") is None:
+            self.skipTest("gdb is not available")
+
+        asyncio.run(self._run_optimized_pie_shared_smoke())
+
+    async def _run_optimized_pie_shared_smoke(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            library = directory / "libcompat.so"
+            binary = directory / "compat-pie"
+            commands = [
+                [
+                    "cc",
+                    "-g",
+                    "-gdwarf-4",
+                    "-O2",
+                    "-fPIC",
+                    "-shared",
+                    str(COMPAT_SHARED),
+                    "-o",
+                    str(library),
+                ],
+                [
+                    "cc",
+                    "-g",
+                    "-gdwarf-4",
+                    "-O2",
+                    "-fPIE",
+                    "-pie",
+                    str(COMPAT_PIE),
+                    f"-L{directory}",
+                    "-lcompat",
+                    "-Wl,-rpath,$ORIGIN",
+                    "-o",
+                    str(binary),
+                ],
+            ]
+            for command in commands:
+                compiler = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                _, stderr = await compiler.communicate()
+                if compiler.returncode != 0:
+                    self.fail(stderr.decode(errors="replace"))
+
+            created = await gdb_create_session(program=str(binary), startup_timeout=10)
+            self.assertTrue(created["ok"], created)
+            session_id = created["session"]["session_id"]
+            try:
+                breakpoint = await gdb_set_breakpoint(session_id, "shared_add")
+                self.assertTrue(breakpoint["ok"], breakpoint)
+                context = await gdb_run_and_context(session_id, timeout=10.0)
+                self.assertTrue(context["ok"], context)
+                self.assertIn("shared_add", context["location"]["func"])
+
+                libraries = await gdb_shared_libraries(session_id)
+                self.assertTrue(libraries["ok"], libraries)
+                self.assertTrue(
+                    any(
+                        "libcompat.so" in str(library_row)
+                        for library_row in libraries["results"]["shared-libraries"]
+                    ),
+                    libraries,
+                )
+
+                if shutil.which("readelf") is not None:
+                    security = await gdb_checksec(session_id=session_id)
+                    self.assertTrue(security["ok"], security)
+                    self.assertTrue(security["security"]["pie"])
+            finally:
+                await gdb_close_session(session_id)
+
     def test_multiple_sessions_and_breakpoint_smoke(self) -> None:
         if shutil.which("cc") is None:
             self.skipTest("cc is not available")
@@ -429,7 +551,7 @@ class GdbSessionSmokeTests(unittest.TestCase):
 
                 all_threads = await gdb_thread_apply_all_backtrace(session_id, max_frames=5)
                 self.assertTrue(all_threads["ok"], all_threads)
-                self.assertIn("Thread", all_threads["console"])
+                self.assertTrue(any("Thread" in line for line in all_threads["lines"]))
 
                 evaluated = await gdb_eval_expression(session_id, "marker")
                 self.assertTrue(evaluated["ok"], evaluated)

@@ -33,6 +33,12 @@ class DistributionDocsTests(unittest.TestCase):
             metadata["install"]["taggedGit"]["args"],
         )
         self.assertIn("gdb://tools/decision-guide", metadata["capabilities"]["resources"])
+        self.assertEqual(metadata["capabilities"]["toolProfiles"]["default"], "full")
+        self.assertEqual(
+            metadata["capabilities"]["toolProfiles"]["snapshots"]["core"]["toolCount"],
+            29,
+        )
+        self.assertEqual(len(metadata["capabilities"]["prompts"]), 4)
 
     def test_readme_documents_pypi_and_tagged_git_installs(self) -> None:
         version = project_version()
@@ -98,7 +104,8 @@ class DistributionDocsTests(unittest.TestCase):
 
         self.assertIn("## Follow-up backlog (reviewed 2026-07-15)", todo)
         self.assertIn("## Completed baseline (July 2026)", todo)
-        self.assertIn("- [ ]", follow_up)
+        self.assertNotIn("- [ ]", follow_up)
+        self.assertEqual(follow_up.count("- [x]"), 11)
         self.assertIn("- [x] Split `src/gdb_mcp/server.py` by tool domain.", todo)
 
 

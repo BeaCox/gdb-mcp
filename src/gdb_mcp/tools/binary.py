@@ -262,6 +262,10 @@ async def gdb_vmmap_structured(
             page_size=page_size,
             default_page_size=page_default,
             max_page_size=max_mapping_page_size,
+            cursor_scope=(
+                f"session:{session_id}:vmmap:{address}:{module}:"
+                f"{executable}:{writable}"
+            ),
         )
 
         gaps: list[dict[str, str]] = []
@@ -714,6 +718,7 @@ async def _run_readelf(
         page_size=page_size,
         default_page_size=max(1, min(len(stdout_text.splitlines()) or 1, 10_000)),
         max_page_size=10_000,
+        cursor_scope=f"readelf:{file_path}:{args}",
     )
     if cursor is not None or page_size is not None:
         stdout_text = "\n".join(stdout_lines)
@@ -935,6 +940,7 @@ async def gdb_symbols(
             page_size=page_size,
             default_page_size=limit,
             max_page_size=1_000,
+            cursor_scope=f"session:{session_id}:symbols:{kind}:{query}",
         )
         payload = {
             **payload,
@@ -1016,6 +1022,10 @@ async def gdb_got(
             page_size=page_size,
             default_page_size=limit,
             max_page_size=2_000,
+            cursor_scope=(
+                f"session:{session.session_id if session else '-'}:"
+                f"got:{path}:{query}:{module}"
+            ),
         )
 
         annotated: list[dict[str, Any]] = []

@@ -14,6 +14,7 @@ def emit(line: str) -> None:
 
 def main() -> None:
     log_path = os.getenv("FAKE_GDB_LOG")
+    large_output = bool(os.getenv("FAKE_GDB_LARGE_OUTPUT"))
     if not os.getenv("FAKE_GDB_NO_PROMPT"):
         emit("(gdb)")
 
@@ -63,10 +64,66 @@ def main() -> None:
             emit("(gdb)")
             continue
         if command.startswith("-data-read-memory-bytes "):
+            if large_output:
+                count_match = re.search(r" (\d+)$", command)
+                count = int(count_match.group(1)) if count_match else 64
+                contents = "41" * count
+                emit(
+                    f'{token}^done,memory=[{{begin="0x7fffffffe000",offset="0x0",'
+                    f'end="0x7ffffffff000",contents="{contents}"}}]'
+                )
+                emit("(gdb)")
+                continue
             emit(
                 f'{token}^done,memory=[{{begin="0x7fffffffe000",offset="0x0",'
                 'end="0x7fffffffe040",contents="04104000000000000020400000000000"}]'
             )
+            emit("(gdb)")
+            continue
+        if large_output and command == "-stack-info-frame":
+            emit(
+                f'{token}^done,frame={{level="0",addr="0x401004",func="main",'
+                'file="sample.c",fullname="/tmp/sample.c",line="42"}'
+            )
+            emit("(gdb)")
+            continue
+        if large_output and command.startswith("-stack-list-frames "):
+            high = int(command.rsplit(" ", 1)[1])
+            frames = ",".join(
+                f'frame={{level="{index}",addr="0x{0x401000 + index * 8:x}",'
+                f'func="function_{index}",file="sample.c",'
+                f'fullname="/tmp/sample.c",line="{42 + index}"}}'
+                for index in range(high + 1)
+            )
+            emit(f"{token}^done,stack=[{frames}]")
+            emit("(gdb)")
+            continue
+        if large_output and command == "-stack-list-variables --simple-values":
+            variables = ",".join(
+                f'{{name="local_{index}",arg="0",type="long",value="{index}"}}'
+                for index in range(20)
+            )
+            emit(f"{token}^done,variables=[{variables}]")
+            emit("(gdb)")
+            continue
+        if large_output and "thread apply all backtrace" in command:
+            lines = "\\n".join(
+                f"Thread {index // 20 + 1} frame {index}: function_{index} at sample.c:{index + 1}"
+                for index in range(200)
+            )
+            emit(f'~"{lines}\\n"')
+            emit(f"{token}^done")
+            emit("(gdb)")
+            continue
+        if large_output and "info functions" in command:
+            lines = ["All functions matching regular expression main:", "sample.c:"]
+            lines.extend(
+                f"0x{0x401000 + index * 8:x}  int main_helper_{index}(int);"
+                for index in range(200)
+            )
+            output = "\\n".join(lines)
+            emit(f'~"{output}\\n"')
+            emit(f"{token}^done")
             emit("(gdb)")
             continue
         if command == '-interpreter-exec console "info proc mappings"':

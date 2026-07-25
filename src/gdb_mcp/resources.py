@@ -7,114 +7,9 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from .tool_profiles import ADVANCED_TOOL_GROUPS, CORE_TOOL_PROFILE
+
 RESOURCE_MIME_TYPE = "application/json"
-
-CORE_TOOL_PROFILE = [
-    "gdb_create_session",
-    "gdb_attach",
-    "gdb_load_core",
-    "gdb_list_sessions",
-    "gdb_status",
-    "gdb_close_session",
-    "gdb_set_breakpoint",
-    "gdb_delete_breakpoint",
-    "gdb_list_breakpoints",
-    "gdb_run_and_context",
-    "gdb_continue_and_context",
-    "gdb_step_and_context",
-    "gdb_next_and_context",
-    "gdb_interrupt",
-    "gdb_context",
-    "gdb_current_location",
-    "gdb_backtrace",
-    "gdb_threads",
-    "gdb_select_thread",
-    "gdb_locals",
-    "gdb_eval_expression",
-    "gdb_read_register",
-    "gdb_registers",
-    "gdb_source",
-    "gdb_disassemble_around_pc",
-    "gdb_read_memory",
-    "gdb_capabilities",
-    "gdb_server_health",
-    "gdb_command_reference",
-]
-
-ADVANCED_TOOL_GROUPS: dict[str, dict[str, Any]] = {
-    "binary_analysis": {
-        "description": "Address, register, mapping, and ELF workflows for stripped binaries.",
-        "resource_uri": "gdb://workflows/binary-analysis",
-        "tools": [
-            "gdb_pwn_context",
-            "gdb_binary_summary",
-            "gdb_register_context",
-            "gdb_vmmap_structured",
-            "gdb_address_info",
-            "gdb_rva_info",
-            "gdb_telescope",
-            "gdb_nearpc",
-            "gdb_symbols",
-            "gdb_got",
-            "gdb_piebase",
-            "gdb_break_rva",
-            "gdb_checksec",
-            "gdb_elf_info",
-        ],
-    },
-    "reverse_debugging": {
-        "description": "rr replay, GDB process-record, and reverse execution controls.",
-        "resource_uri": "gdb://tools/decision-guide",
-        "tools": [
-            "gdb_rr_record",
-            "gdb_start_rr_replay_session",
-            "gdb_start_recording",
-            "gdb_record_status",
-            "gdb_reverse_continue",
-            "gdb_reverse_continue_and_context",
-            "gdb_reverse_step",
-            "gdb_reverse_step_and_context",
-            "gdb_reverse_next",
-            "gdb_reverse_next_and_context",
-            "gdb_reverse_finish",
-            "gdb_reverse_finish_and_context",
-            "gdb_stop_recording",
-        ],
-    },
-    "remote_target": {
-        "description": "Existing or managed gdbserver targets and remote library paths.",
-        "resource_uri": "gdb://tools/decision-guide",
-        "tools": [
-            "gdb_connect_gdbserver",
-            "gdb_launch_gdbserver",
-            "gdb_set_remote_paths",
-            "gdb_gdbserver_status",
-            "gdb_detach_gdbserver",
-        ],
-    },
-    "diagnostics": {
-        "description": "Server and session troubleshooting beyond the compact health check.",
-        "resource_uri": "gdb://tools/decision-guide",
-        "tools": [
-            "gdb_session_diagnostics",
-            "gdb_recent_commands",
-            "gdb_recent_events",
-            "gdb_close_idle_sessions",
-        ],
-    },
-    "unsafe": {
-        "description": "Explicitly unsafe target mutation or raw GDB command execution.",
-        "resource_uri": "gdb://tools/decision-guide",
-        "requires": "--unsafe or GDB_MCP_ALLOW_UNSAFE=1",
-        "tools": [
-            "gdb_execute",
-            "gdb_call_function",
-            "gdb_set_variable",
-            "gdb_write_memory",
-            "gdb_breakpoint_commands",
-        ],
-    },
-}
 
 MI_COMMANDS = [
     {
@@ -545,7 +440,8 @@ REFERENCE_RESOURCES: dict[str, dict[str, Any]] = {
                 "gdb_recent_commands",
             ],
             "pagination": {
-                "cursor_format": "non-negative decimal offset",
+                "cursor_format": "opaque session/query/snapshot-bound token",
+                "cursor_ttl_seconds": 900,
                 "fields": ["cursor", "page_size", "pagination.next_cursor"],
                 "tools": [
                     "gdb_symbols",
@@ -599,6 +495,12 @@ def tool_profile() -> dict[str, Any]:
     """Return core and advanced tool groups for gdb_capabilities."""
 
     return {
+        "selection": {
+            "default": "full",
+            "environment": "GDB_MCP_TOOL_PROFILE",
+            "cli": "--tool-profile",
+            "values": ["full", "core", "advanced:<group>[,<group>]"],
+        },
         "core_default": {
             "description": "Recommended default set for common debugging.",
             "tool_count": len(CORE_TOOL_PROFILE),
