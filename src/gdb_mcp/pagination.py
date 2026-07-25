@@ -29,7 +29,10 @@ def _b64encode(value: bytes) -> str:
 
 def _b64decode(value: str) -> bytes:
     padding = "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode(value + padding)
+    decoded = base64.urlsafe_b64decode(value + padding)
+    if _b64encode(decoded) != value:
+        raise ValueError("non-canonical base64url encoding")
+    return decoded
 
 
 def _stable_digest(value: Any) -> str:

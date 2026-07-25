@@ -85,6 +85,12 @@ class OpaquePaginationTests(unittest.TestCase):
         )
         cursor = metadata["next_cursor"]
         assert cursor is not None
+        prefix, payload, signature = cursor.split(".")
+        tampered_signature = ("A" if signature[0] != "A" else "B") + signature[1:]
+        tampered_cursor = f"{prefix}.{payload}.{tampered_signature}"
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        alias_index = alphabet.index(signature[-1]) + 1
+        noncanonical_cursor = f"{prefix}.{payload}.{signature[:-1]}{alphabet[alias_index]}"
 
         with self.assertRaisesRegex(CursorError, "expired cursor"):
             paginate_items(
@@ -101,7 +107,18 @@ class OpaquePaginationTests(unittest.TestCase):
         with self.assertRaisesRegex(CursorError, "invalid cursor"):
             paginate_items(
                 [1, 2],
-                cursor=cursor[:-1] + ("A" if cursor[-1] != "A" else "B"),
+                cursor=tampered_cursor,
+                page_size=1,
+                default_page_size=1,
+                max_page_size=2,
+                cursor_scope="session:a:events",
+                _now=101,
+            )
+
+        with self.assertRaisesRegex(CursorError, "invalid cursor"):
+            paginate_items(
+                [1, 2],
+                cursor=noncanonical_cursor,
                 page_size=1,
                 default_page_size=1,
                 max_page_size=2,
