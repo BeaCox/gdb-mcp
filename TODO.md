@@ -1,271 +1,149 @@
-# TODO
+# Roadmap
 
-## Follow-up backlog (reviewed 2026-07-15)
+Reviewed 2026-07-27. Current released version: `0.4.0`.
 
-The initial July maintenance plan is complete and retained below as historical
-context. This follow-up deliberately favours MCP protocol fidelity, safe remote
-operation, and repeatable debugging over adding another broad raw-GDB surface.
+The July maintenance backlogs are complete. This roadmap now tracks only work
+that has not shipped, grouped by delivery horizon instead of by a growing list
+of historical priorities. Version headings are planning targets, not release
+date promises.
 
-Review inputs:
+## Direction
 
-- [`signal-slot/mcp-gdb`](https://github.com/signal-slot/mcp-gdb): validates the
-  baseline session/core/breakpoint workflow, but its unrestricted command tool
-  reinforces keeping `gdb_execute` opt-in.
-- [`Ipiano/gdb-mcp`](https://github.com/Ipiano/gdb-mcp): demonstrates useful
-  per-session GDB initialization for core-dump and project-specific workflows.
-- [`pansila/mcp_server_gdb`](https://github.com/pansila/mcp_server_gdb): shows
-  demand for remote transports and inspectable agent activity; its Nix support
-  remains a useful packaging reference.
-- [`maxholman/mcp-gdbmi`](https://github.com/maxholman/mcp-gdbmi): highlights
-  that verbose MI output needs a token-aware, not merely character-aware,
-  response budget.
-- The [MCP prompts specification](https://modelcontextprotocol.io/specification/2024-11-05/server/prompts/),
-  [progress specification](https://modelcontextprotocol.io/specification/2024-11-05/basic/utilities/progress),
-  and [Streamable HTTP transport specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports).
+- Preserve safe, structured debugger workflows before expanding the tool
+  surface. Raw GDB access remains opt-in.
+- Keep stdio startup lazy and keep remote HTTP deployment explicit,
+  authenticated, and isolated.
+- Prefer reproducible workflows, bounded responses, and actionable failures
+  over client-specific presentation features.
+- Require deterministic protocol tests for every public contract change and a
+  live-GDB test where behavior depends on GDB itself.
+- Move completed work to `CHANGELOG.md`; do not retain checked tasks in the
+  active roadmap.
 
-### P0: Protocol fidelity and deployment safety
+## Now — 0.5.0 release and contract stability
 
-- [x] Make the lazy stdio proxy advertise and serve the same static MCP
-  capabilities as the backend without starting GDB.
-  - It currently advertises only tools and returns empty `resources/list` and
-    `prompts/list` results, even though the backend has reference resources.
-  - Add accurate `initialize` capabilities plus `resources/list`,
-    `resources/read`, and any static prompt endpoints; preserve lazy startup.
-  - Acceptance: direct-backend and proxy JSON-RPC contract tests discover and
-    read the same static resources/prompts, and a resource/prompt request does
-    not create a backend process or GDB session.
+### P0: Release integrity
 
-- [x] Harden Streamable HTTP deployment before treating it as a supported remote
-  service.
-  - Continue binding to loopback by default; reject non-loopback hosts unless an
-    explicit acknowledgement is supplied.
-  - Provide an authentication integration point compatible with MCP HTTP
-    authorization (or an explicitly documented, tested reverse-proxy mode), and
-    do not allow unsafe tools to be exposed accidentally.
-  - Acceptance: tests cover public-bind refusal, authenticated and rejected
-    requests, and an HTTP smoke workflow; the deployment guide includes TLS,
-    proxy, and token-rotation guidance.
+- [ ] Publish the completed July follow-up work as a coherent release.
+  - Populate the `Unreleased` changelog from the commits after `0.4.0`, choose
+    the release version, and synchronize package metadata, lock data, registry
+    metadata, plugin manifests, and pinned install examples.
+  - Acceptance: version-reference, registry, lazy-startup, response-budget, full
+    test, build, and clean-wheel-install checks pass from a clean checkout.
 
-### P1: Agent-facing debugging workflows
+- [ ] Define and enforce the public MCP compatibility contract.
+  - Snapshot initialize capabilities, prompt/resource metadata, and complete
+    tool input schemas for each discovery profile; the current snapshots cover
+    tool names only.
+  - Document additive, breaking, and deprecated changes and the minimum notice
+    required before removing a public tool or field.
+  - Acceptance: CI reports a readable contract diff and rejects an unapproved
+    breaking change; the policy is linked from `CONTRIBUTING.md`.
 
-- [x] Expose user-invoked MCP prompts for the main safe workflows.
-  - Start with `debug_local`, `triage_core`, `debug_remote`, and
-    `analyze_stripped_binary`; each should state prerequisites, the tool
-    sequence, stopping conditions, and the unsafe-mode boundary.
-  - Acceptance: `prompts/list` and `prompts/get` contract tests cover required
-    and optional arguments, validation, and safe interpolation of user paths.
+- [ ] Complete a pre-release security and deployment review.
+  - Exercise malformed authentication, forwarded host/origin handling,
+    disconnects, concurrent HTTP clients, session isolation, and unsafe-mode
+    combinations through the transport rather than direct function calls.
+  - Keep reverse-proxy guidance vendor-neutral and verify every public-listener
+    requirement against an integration fixture.
+  - Acceptance: the threat model and tested deployment behavior agree, and no
+    rejected request starts GDB or leaves a session or child process behind.
 
-- [x] Report bounded MCP progress for long-running operations and preserve the
-  existing cancellation guarantees.
-  - Cover run/continue, `rr` recording and replay startup, managed gdbserver
-    connection, and large external inspection commands when a client supplies a
-    progress token.
-  - Rate-limit notifications and stop them promptly on completion, timeout, or
-    cancellation.
-  - Acceptance: transport-level tests observe ordered progress, no notification
-    after termination, and no leaked pending command or child process.
+### P1: Runtime resilience
 
-- [x] Add reusable, explicitly security-gated GDB initialization profiles.
-  - Support a named/profiled set of startup commands or init files for local,
-    core, and remote sessions; treat arbitrary initialization as unsafe because
-    GDB command files can execute commands outside the debugger.
-  - Record the profile identity and resulting configuration in session
-    diagnostics so runs are reproducible.
-  - Acceptance: a fixture verifies source-directory, pretty-printer, sysroot,
-    and solib-search-path setup; unsafe initialization is denied by default.
+- [ ] Make session resource limits enforceable without agent housekeeping.
+  - Add an optional idle-session TTL, prune dead sessions before enforcing the
+    session limit, and expose bounded retention settings for command/event
+    history.
+  - Preserve the explicit `gdb_close_idle_sessions` tool for manual cleanup and
+    keep automatic cleanup disabled by default for compatibility.
+  - Acceptance: fake-clock tests cover expiry during idle, running, disconnected,
+    and shutdown states with no process or task leaks.
 
-- [x] Export a redacted debugging-session bundle for agent-run diagnosis.
-  - Include immutable session metadata, tool/MI event chronology, selected
-    breakpoints, GDB version, and a reproducible command summary; exclude raw
-    memory, evaluated values, and environment secrets by default.
-  - Build on `gdb_session_diagnostics` rather than a separate UI, while leaving
-    room for a future local inspector.
-  - Acceptance: a bundle can explain a fixture failure without containing a
-    planted secret; redaction and opt-in raw fields have dedicated tests.
+- [ ] Standardize failures across all tool families.
+  - Define stable error codes, retryability, and an optional suggested action
+    while retaining concise human-readable messages.
+  - Convert validation, dependency, GDB/MI, timeout, cancellation, stale-cursor,
+    and policy-denial paths without exposing secrets or raw subprocess output by
+    default.
+  - Acceptance: representative contract tests cover each error category and
+    existing success response shapes remain unchanged.
 
-- [x] Add an opt-in core tool profile that actually reduces `tools/list`.
-  - The current decision guide identifies core tools, but every client still
-    receives the full surface. Keep the complete profile compatible by default
-    and allow constrained clients to request core-only discovery.
-  - Acceptance: core, full, and advanced-profile snapshots are stable; every
-    documented cookbook either uses the core profile or declares its advanced
-    dependency.
+## Next — 0.6.0 agent effectiveness and maintainability
 
-### P2: Reliability, performance, and release confidence
+### P1: Measurable debugging outcomes
 
-- [x] Replace decimal offset cursors with opaque, session/version-bound cursors
-  for mutable or externally produced output.
-  - Retain the current pagination shape, but prevent a cursor for one session or
-    collection snapshot being reused against another and return a clear stale
-    cursor error after invalidation.
-  - Acceptance: pagination tests cover concurrent mutations, cross-session
-    cursor rejection, expiry, and complete traversal without duplicate rows.
+- [ ] Add a scenario-based agent evaluation harness.
+  - Include local source bugs, optimized/stripped binaries, core dumps, shared
+    libraries, remote gdbserver, and unavailable dependencies.
+  - Record completion, tool-call count, serialized bytes, estimated tokens,
+    elapsed time, and cleanup state without requiring a hosted model in CI.
+  - Acceptance: deterministic scripted baselines run in CI and make workflow or
+    response-budget regressions visible per scenario.
 
-- [x] Make response regression checks token-aware.
-  - Continue the existing character limits, then add deterministic serialized
-    response-size fixtures and a documented conservative token estimate for
-    context, backtrace-all, symbols, readelf, and memory workflows.
-  - Avoid lossy MI-number rewriting; remove duplicate raw/structured data before
-    introducing a compact wire representation.
-  - Acceptance: CI fails on budget regressions and reports the largest fixture
-    responses in bytes and estimated tokens.
+- [ ] Improve source and debug-information discovery.
+  - Provide explicit, security-reviewed setup for source maps, separate debug
+    files, build IDs, and opt-in debuginfod use; record the resolved setup in
+    session diagnostics and exported bundles.
+  - Acceptance: fixtures cover relocated source, a split-debug executable, and
+    an unavailable symbol server with actionable fallback guidance.
 
-- [x] Expand live compatibility CI around actual GDB behaviour.
-  - Run the smoke and transcript suites on the supported Python/GDB matrix and
-    add fixtures for C++, optimized binaries, shared libraries, PIE, remote
-    gdbserver, and unavailable optional dependencies.
-  - Record feature gates rather than assuming a GDB command exists from its
-    version string alone.
-  - Acceptance: CI artifacts identify the GDB build and enabled feature set;
-    unsupported combinations skip with an actionable reason.
+- [ ] Add opt-in operational observability.
+  - Emit structured logs to stderr with request/session correlation and redacted
+    lifecycle, latency, timeout, and cleanup events; never write protocol logs
+    to stdout.
+  - Acceptance: logging is off or minimal by default, planted secrets are
+    redacted, and tests prove stdio JSON-RPC remains uncontaminated.
 
-- [x] Add MCP interoperability and release-install checks.
-  - Exercise stdio and Streamable HTTP initialization, tools, resources,
-    prompts, cancellation, and pagination with a real MCP client harness, not
-    only direct FastMCP calls.
-  - Build the wheel in CI, install it into a clean environment, run the lazy
-    startup check, and validate registry metadata against the published tool
-    surface.
-  - Acceptance: the clean-install matrix catches a missing package asset,
-    protocol capability mismatch, or accidental eager backend startup.
+### P2: Internal boundaries
 
-## Completed baseline (July 2026)
+- [ ] Split the largest tool modules behind unchanged registration APIs.
+  - Separate inspection formatting/pagination from GDB commands, and separate
+    ELF/readelf execution from binary-analysis interpretation.
+  - Acceptance: public tool names, argument schemas, annotations, profile
+    membership, and response fixtures are unchanged after the refactor.
 
-Maintenance backlog for turning `gdb-mcp` from a broad feature surface into a
-stable, easier-to-maintain debugger server. Completed in commit `66736f2` and
-the subsequent focused commits.
+- [ ] Broaden the GDB/MI compatibility corpus without adding a runtime parser
+  dependency.
+  - Capture sanitized transcripts from supported distro GDB builds and add
+    property tests for escaping, nesting depth, malformed input, and async
+    record ordering.
+  - Acceptance: every parser fix adds a minimized fixture and all corpus cases
+    enforce bounded parse time and memory.
 
-This list was based on a July 2026 review of the local codebase and comparable
-open source GDB MCP servers, including `signal-slot/mcp-gdb`,
-`pansila/mcp_server_gdb`, `Ipiano/gdb-mcp`, `schuay/gdb-mcp`,
-`maxholman/mcp-gdbmi`, `hnmr293/gdb-mcp`, and `jtang613/gdb-mcp`.
+## Later — ecosystem options
 
-## P0: Maintainability
+These items require evidence from users or maintainers before they are promoted
+to a release milestone.
 
-- [x] Split `src/gdb_mcp/server.py` by tool domain.
-  - Target modules: `tools/session.py`, `tools/execution.py`,
-    `tools/breakpoints.py`, `tools/inspection.py`, `tools/binary.py`,
-    `tools/remote.py`, and `tools/diagnostics.py`.
-  - Keep a small central registration/entry module so MCP startup behavior stays
-    unchanged.
-  - Acceptance: no tool names or public argument names change; full test suite
-    remains green.
+- [ ] Evaluate a maintained Nix flake/package for reproducible GDB, gdbserver,
+  compiler, and optional rr dependencies.
+- [ ] Evaluate cross-architecture remote debugging with explicit architecture,
+  sysroot, and multiarch-GDB compatibility reporting.
+- [ ] Evaluate additional MCP client and authorization-provider fixtures when
+  they reveal protocol or deployment behavior not covered by the current
+  stdio/Streamable HTTP harness.
 
-- [x] Introduce shared response models.
-  - Define common shapes for success, error, session, command, and diagnostic
-    responses.
-  - Reduce ad hoc dictionaries and inconsistent response fields across tools.
-  - Acceptance: contract tests cover representative responses for each tool
-    family.
+## Non-goals for the current roadmap
 
-- [x] Preserve the cancellation and cleanup guarantees during refactors.
-  - Keep coverage for cancelled GDB commands, cancelled gdbserver connects,
-    pending-command cleanup, and managed gdbserver teardown.
-  - Acceptance: async lifecycle tests still exercise cancellation before and
-    after command dispatch.
+- Turning `gdb-mcp` into a general shell or enabling unsafe tools by default.
+- Adding more thin wrappers around raw GDB commands without a demonstrated
+  agent workflow.
+- Claiming local macOS or Windows debugging support without dedicated CI and
+  maintainership.
+- Building an IDE, terminal UI, or hosted multi-tenant debugging service.
 
-## P1: Agent Experience
+## Completed milestones
 
-- [x] Move long-form reference material into MCP resources.
-  - Add resources such as `gdb://workflows/basic`,
-    `gdb://workflows/core-dump`, `gdb://workflows/binary-analysis`,
-    `gdb://commands/mi`, and `gdb://tools/decision-guide`.
-  - Keep `gdb_command_reference` as a compact index that points clients to the
-    resources.
-  - Acceptance: clients can discover workflows without calling a large tool
-    response.
+- July 2026 baseline (`66736f2` and focused follow-ups): modular tool domains,
+  shared responses, cancellation cleanup, resources, compact profiles, bounded
+  and paginated outputs, rr and remote/core workflows, packaging, parser tests,
+  cookbooks, and compatibility documentation.
+- July 2026 protocol and reliability follow-up (`51c999a`, `4a17615`, and
+  `e52ae61`): lazy static resources/prompts, HTTP safety, workflow prompts,
+  progress, initialization profiles, redacted bundles, real discovery profiles,
+  opaque cursors, token budgets, live compatibility CI, and MCP/release-install
+  interoperability checks.
 
-- [x] Define a smaller recommended tool profile.
-  - Document a core default set of roughly 20-30 tools for common debugging.
-  - Keep binary-analysis, reverse-debugging, remote-target, diagnostics, and
-    unsafe tools discoverable but clearly grouped as advanced workflows.
-  - Acceptance: `gdb_capabilities` identifies core and advanced tool groups.
-
-- [x] Add response-size profiles.
-  - Support consistent `summary`, `structured`, and `raw` output modes where
-    useful.
-  - Apply the same strategy to context, backtrace, variables, symbols, readelf,
-    and memory-heavy tools.
-  - Acceptance: large outputs have predictable bounded responses.
-
-- [x] Add pagination or resource handles for large outputs.
-  - Candidate tools: symbols, GOT/relocations, readelf output, memory dumps,
-    thread-all backtraces, and command history.
-  - Acceptance: tools can return a cursor or resource handle instead of forcing
-    all data into one MCP response.
-
-## P1: Debugging Capability
-
-- [x] Add native rr workflows.
-  - Add tools such as `gdb_rr_record` and `gdb_start_rr_replay_session`.
-  - Reuse existing reverse/context tools for replay sessions where possible.
-  - Acceptance: a smoke test records a small binary and replays it when `rr` is
-    available, skipping cleanly otherwise.
-
-- [x] Expand remote-target coverage.
-  - Cover IPv6 endpoints, Unix-socket style targets if supported by GDB, custom
-    `sysroot`, and `solib-search-path` workflows.
-  - Acceptance: contract tests cover validation; smoke tests cover available
-    local `gdbserver` paths.
-
-- [x] Add core-dump workflow tests with sysroot/search-path setup.
-  - Acceptance: a smoke test verifies core loading plus post-load path
-    configuration and thread/backtrace inspection.
-
-## P2: Distribution
-
-- [x] Publish stable PyPI releases.
-  - Keep `uvx --from git+...` documented, but make `uvx gdb-mcp` or
-    `pipx install gdb-mcp` viable.
-  - Acceptance: README install paths include PyPI and tagged Git options.
-
-- [x] Add registry metadata for MCP discovery sites.
-  - Consider `server.json` or equivalent metadata used by MCP marketplaces.
-  - Acceptance: install instructions are machine-readable where practical.
-
-- [x] Evaluate Nix/Homebrew packaging.
-  - Nix is especially useful for GDB/gdbserver/rr dependencies.
-  - Acceptance: documented optional install path or a clear decision not to
-    support it yet.
-
-## P2: Quality
-
-- [x] Strengthen MI parser tests.
-  - Add real GDB/MI transcript fixtures for async records, stream records,
-    errors, nested values, and malformed lines.
-  - Consider property/fuzz-style parser tests for `src/gdb_mcp/mi.py`.
-  - Acceptance: parser regressions fail without needing a live GDB process.
-
-- [x] Add differential checks against known MI parsers or captured GDB output.
-  - Use this only for parser confidence; avoid adding heavyweight runtime
-    dependencies to the package.
-  - Acceptance: fixture-based comparison documents intentional differences.
-
-- [x] Improve installer and lazy proxy coverage.
-  - Current project coverage is strongest around server/session behavior; keep
-    lifting coverage for install and proxy edge cases.
-  - Acceptance: coverage gaps in `installer.py` and `lazy.py` are reduced for
-    error handling and configuration branches.
-
-- [x] Add performance and token-budget regression checks.
-  - Track response sizes for common context, pwn context, symbol, and readelf
-    workflows.
-  - Acceptance: tests or scripts catch accidental large-response regressions.
-
-## P2: Documentation
-
-- [x] Add cookbook-style workflows.
-  - Suggested topics: local source debugging, stripped binary analysis, core
-    dump triage, remote gdbserver, managed gdbserver, attach/detach, reverse
-    debugging, and unsafe-mode workflows.
-  - Acceptance: each cookbook has a concrete tool sequence and expected result
-    shape.
-
-- [x] Document security tradeoffs per workflow.
-  - Link each unsafe or destructive workflow back to `SECURITY.md`.
-  - Acceptance: docs explain when to use containers, VMs, or dedicated users.
-
-- [x] Add a compatibility matrix.
-  - Track Python versions, GDB versions, Linux distributions, gdbserver, rr,
-    and known unsupported platforms.
-  - Acceptance: contributors can tell whether a failure is expected or a bug.
+Release-level detail belongs in `CHANGELOG.md`; the Git history remains the
+source for implementation-level detail.

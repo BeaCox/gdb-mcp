@@ -98,15 +98,20 @@ class DistributionDocsTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, compatibility)
 
-    def test_todo_preserves_completed_baseline_and_follow_up_backlog(self) -> None:
+    def test_todo_is_an_actionable_forward_looking_roadmap(self) -> None:
         todo = (ROOT / "TODO.md").read_text(encoding="utf-8")
-        follow_up, _ = todo.split("## Completed baseline", maxsplit=1)
+        active, completed = todo.split("## Completed milestones", maxsplit=1)
 
-        self.assertIn("## Follow-up backlog (reviewed 2026-07-15)", todo)
-        self.assertIn("## Completed baseline (July 2026)", todo)
-        self.assertNotIn("- [ ]", follow_up)
-        self.assertEqual(follow_up.count("- [x]"), 11)
-        self.assertIn("- [x] Split `src/gdb_mcp/server.py` by tool domain.", todo)
+        self.assertIn(f"Current released version: `{project_version()}`", todo)
+        self.assertIn("## Now — 0.5.0 release and contract stability", active)
+        self.assertIn("## Next — 0.6.0 agent effectiveness and maintainability", active)
+        self.assertIn("## Later — ecosystem options", active)
+        self.assertIn("## Non-goals for the current roadmap", active)
+        self.assertGreaterEqual(active.count("- [ ]"), 8)
+        self.assertNotIn("- [x]", todo)
+        self.assertNotIn("- [ ]", completed)
+        self.assertIn("July 2026 baseline", completed)
+        self.assertIn("July 2026 protocol and reliability follow-up", completed)
 
 
 if __name__ == "__main__":
