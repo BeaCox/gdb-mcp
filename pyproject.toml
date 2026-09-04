@@ -35,7 +35,7 @@ dev = [
   "build>=1.2",
   "pytest>=9.1.1",
   "pytest-cov>=7.1.0",
-  "ruff>=0.15.21",
+  "ruff>=0.16.5",
 ]
 
 [project.scripts]
