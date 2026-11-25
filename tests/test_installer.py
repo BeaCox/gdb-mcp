@@ -199,6 +199,24 @@ class InstallerTests(unittest.TestCase):
             "./plugins/gdb-mcp",
         )
 
+    def test_replace_release_tags_updates_claude_marketplace_at_ref(self) -> None:
+        import importlib.util
+
+        script = ROOT / "scripts" / "sync_release_version.py"
+        spec = importlib.util.spec_from_file_location("sync_release_version", script)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        sample = (
+            "claude plugin marketplace add BeaCox/gdb-mcp@v0.4.0\n"
+            "codex plugin marketplace add BeaCox/gdb-mcp --ref v0.4.0\n"
+            "uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.4.0 gdb-mcp\n"
+        )
+        updated = module.replace_release_tags(sample, "0.5.0")
+        self.assertNotIn("v0.4.0", updated)
+        self.assertEqual(updated.count("v0.5.0"), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

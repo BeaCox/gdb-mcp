@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
-from ..analysis import read_memory_contents as _read_memory_contents
 from ..analysis import source_context as _source_context
-from ..pagination import paginate_range, paginate_text_lines
+from ..pagination import paginate_range
 from .execution import (
     gdb_continue,
     gdb_next,
@@ -21,6 +19,13 @@ from .execution import (
     gdb_reverse_step,
     gdb_run,
     gdb_step,
+)
+from .inspection_format import (
+    decode_c_string,
+    disassembly_options,
+    filter_source_matches,
+    format_memory_read_payload,
+    format_paged_console_payload,
 )
 from .shared import (
     _cli_disassemble_command,
@@ -53,7 +58,7 @@ from .shared import (
 
 
 def register_tools(
-    mcp: FastMCP[Any],
+    mcp: MCPServer[Any],
     *,
     read_only: ToolAnnotations,
     session_mutation: ToolAnnotations,
@@ -336,9 +341,7 @@ async def gdb_disassemble(
             _require_cli_target("end_address", end_address)
             target = f"{start_address},{end_address}"
 
-        options = ""
-        if mixed or raw_bytes:
-            options = "/" + ("m" if mixed else "") + ("r" if raw_bytes else "")
+        options = disassembly_options(mixed, raw_bytes)
         session = await manager.get(session_id)
         return _result(
             session,
@@ -648,9 +651,7 @@ async def gdb_disassemble_around_pc(
             raise ValueError("bytes_before must be between 0 and 4096")
         if not 1 <= bytes_after <= 4096:
             raise ValueError("bytes_after must be between 1 and 4096")
-        options = ""
-        if mixed or raw_bytes:
-            options = "/" + ("m" if mixed else "") + ("r" if raw_bytes else "")
+        options = disassembly_options(mixed, raw_bytes)
         command = _cli_disassemble_command(
             options,
             f"$pc-{bytes_before},$pc+{bytes_after}",
@@ -676,14 +677,7 @@ async def gdb_find_source(
             raise ValueError("limit must be between 1 and 500")
         session = await manager.get(session_id)
         result = _result(session, await session.execute("info sources", timeout=10.0))
-        matches: list[str] = []
-        if result["ok"]:
-            for chunk in re.split(r"[\s,]+", result["console"]):
-                source = chunk.strip()
-                if source and query in source and source not in matches:
-                    matches.append(source)
-                    if len(matches) >= limit:
-                        break
+        matches = filter_source_matches(result["console"], query, limit) if result["ok"] else []
         return {**result, "matches": matches}
     except Exception as exc:
         return _error(exc)
@@ -742,25 +736,15 @@ async def gdb_thread_apply_all_backtrace(
                 timeout=15.0,
             ),
         )
-        lines, pagination = paginate_text_lines(
-            str(payload.get("console") or ""),
+        return format_paged_console_payload(
+            payload,
+            output=output,
             cursor=cursor,
             page_size=page_size,
             default_page_size=200,
             max_page_size=2_000,
             cursor_scope=f"session:{session_id}:thread-all-backtrace:{max_frames}",
         )
-        payload = {
-            **payload,
-            "lines": lines,
-            "line_count": len(lines),
-            "pagination": pagination,
-        }
-        if output != "raw":
-            payload["console"] = "\n".join(lines)
-        if output == "structured":
-            payload.pop("console", None)
-        return _profile_command_payload(payload, output)
     except Exception as exc:
         return _error(exc)
 
@@ -932,27 +916,14 @@ async def gdb_read_memory(
                 "truncated": False,
                 "output_limit_chars": session.output_limit_chars,
             }
-        byte_count = len(_read_memory_contents(payload))
-        payload = {
-            **payload,
-            "address": address,
-            "read_address": read_address,
-            "requested_byte_count": count,
-            "requested_page_bytes": read_count,
-            "returned_byte_count": byte_count,
-            "pagination": pagination,
-        }
-        return _profile_command_payload(
+        return format_memory_read_payload(
             payload,
-            output,
-            summary_fields={
-                "address": address,
-                "read_address": read_address,
-                "requested_byte_count": count,
-                "requested_page_bytes": read_count,
-                "returned_byte_count": byte_count,
-                "pagination": pagination,
-            },
+            address=address,
+            read_address=read_address,
+            count=count,
+            read_count=read_count,
+            pagination=pagination,
+            output=output,
         )
     except Exception as exc:
         return _error(exc)
@@ -1032,14 +1003,7 @@ async def gdb_read_c_string(
             timeout=10.0,
         )
         payload = _result(session, result)
-        string_value = ""
-        if payload["ok"]:
-            memory = payload["results"].get("memory", [])
-            contents = ""
-            if memory and isinstance(memory, list):
-                contents = str(memory[0].get("contents", ""))
-            data = bytes.fromhex(contents) if contents else b""
-            string_value = data.split(b"\0", 1)[0].decode(errors="replace")
+        string_value = decode_c_string(payload)
         return _profile_command_payload(
             {**payload, "string": string_value},
             output,
@@ -1088,24 +1052,14 @@ async def gdb_memory_mappings(
         _require_output_profile(output)
         session = await manager.get(session_id)
         payload = _result(session, await session.execute("info proc mappings", timeout=10.0))
-        lines, pagination = paginate_text_lines(
-            str(payload.get("console") or ""),
+        return format_paged_console_payload(
+            payload,
+            output=output,
             cursor=cursor,
             page_size=page_size,
             default_page_size=200,
             max_page_size=2_000,
             cursor_scope=f"session:{session_id}:memory-mappings",
         )
-        payload = {
-            **payload,
-            "lines": lines,
-            "line_count": len(lines),
-            "pagination": pagination,
-        }
-        if output != "raw":
-            payload["console"] = "\n".join(lines)
-        if output == "structured":
-            payload.pop("console", None)
-        return _profile_command_payload(payload, output)
     except Exception as exc:
         return _error(exc)

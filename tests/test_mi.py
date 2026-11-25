@@ -1,8 +1,16 @@
 import json
+import random
+import time
 import unittest
 from pathlib import Path
 
-from gdb_mcp.mi import MIParseError, c_escape, parse_mi_record, quote_cli_command
+from gdb_mcp.mi import (
+    MAX_NESTING_DEPTH,
+    MIParseError,
+    c_escape,
+    parse_mi_record,
+    quote_cli_command,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -142,6 +150,59 @@ class MIParserTests(unittest.TestCase):
             with self.subTest(line=line):
                 with self.assertRaises(MIParseError):
                     parse_mi_record(line)
+
+    def test_parse_rejects_excessive_nesting_and_oversized_lines(self) -> None:
+        deep_tuple = "1^done,a=" + ("{x=" * (MAX_NESTING_DEPTH + 2)) + '"1"' + (
+            "}" * (MAX_NESTING_DEPTH + 2)
+        )
+        with self.assertRaisesRegex(MIParseError, "nesting depth"):
+            parse_mi_record(deep_tuple)
+
+        deep_list = "1^done,a=" + ("[" * (MAX_NESTING_DEPTH + 2)) + '"1"' + (
+            "]" * (MAX_NESTING_DEPTH + 2)
+        )
+        with self.assertRaisesRegex(MIParseError, "nesting depth"):
+            parse_mi_record(deep_list)
+
+        with self.assertRaisesRegex(MIParseError, "exceeds limit"):
+            parse_mi_record('~"' + ("a" * 128) + '"', max_line_length=64)
+
+    def test_c_escape_and_stream_roundtrip_property(self) -> None:
+        rng = random.Random(20260727)
+        alphabet = (
+            "abcXYZ0123456789 \t\n\r\a\b\f\v\\\"\'\0"
+            + "".join(chr(code) for code in range(1, 32))
+            + "中文路径€"
+        )
+        for _ in range(150):
+            length = rng.randint(0, 48)
+            sample = "".join(rng.choice(alphabet) for _ in range(length))
+            encoded = c_escape(sample)
+            parsed = parse_mi_record(f"~{encoded}")
+            self.assertEqual(parsed.text, sample)
+
+    def test_parse_c_string_octal_and_quote_escapes(self) -> None:
+        record = parse_mi_record(r'~"\377\777\x41\'end"')
+        self.assertEqual(record.text, "\xff?7A'end")
+
+    def test_parse_broad_mi_corpus_in_bounded_time(self) -> None:
+        corpus = [
+            '10^done,bkpt={number="2",type="breakpoint",disp="keep",enabled="y",'
+            'addr="<MULTIPLE>",locations=[{number="2.1",enabled="y",addr="0x401200",'
+            'func="ns::Widget<int>::step(int const&)"},{number="2.2",enabled="y",'
+            'addr="0x401240",func="ns::Widget<double>::step(double const&)"}]}',
+            '=breakpoint-modified,bkpt={number="2",times="3"}',
+            '11^done,wpt={number="3",exp="*(int*)0x7fffffffe010"}',
+            '*stopped,reason="watchpoint-trigger",wpt={number="3",exp="x"},'
+            'value={old="0",new="42"},thread-id="1",stopped-threads="all"',
+            '&"warning: Loadable section \\".note.gnu.property\\" outside ELF segments\\n"',
+        ]
+        started = time.perf_counter()
+        for _ in range(50):
+            for line in corpus:
+                record = parse_mi_record(line)
+                self.assertIsNotNone(record.kind)
+        self.assertLess(time.perf_counter() - started, 1.0)
 
 
 if __name__ == "__main__":

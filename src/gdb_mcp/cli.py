@@ -8,6 +8,7 @@ import os
 import sys
 
 from .lazy import LazyBackend, _backend_subprocess_env, _split_env_command, run_stdio
+from .observability import logger, parse_log_level
 from .tool_profiles import parse_tool_profile
 
 
@@ -118,6 +119,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "advanced:<group>[,<group>]"
         ),
     )
+    parser.add_argument(
+        "--idle-session-ttl",
+        type=float,
+        default=None,
+        help="Optional idle session TTL in seconds for the spawned backend",
+    )
+    parser.add_argument(
+        "--log-level",
+        default=None,
+        help="Operational stderr log level: off (default), error, warning, info, debug",
+    )
     return parser
 
 
@@ -125,6 +137,8 @@ def main() -> None:
     args = _build_parser().parse_args()
     try:
         profile = parse_tool_profile(args.tool_profile)
+        if args.log_level is not None:
+            logger.set_level(parse_log_level(args.log_level))
     except ValueError as exc:
         _build_parser().error(str(exc))
     from .installer import (
@@ -175,9 +189,15 @@ def main() -> None:
             command_args.extend(["--max-sessions", str(args.max_sessions)])
         if args.output_limit_chars is not None:
             command_args.extend(["--output-limit-chars", str(args.output_limit_chars)])
+        if args.idle_session_ttl is not None:
+            command_args.extend(["--idle-session-ttl", str(args.idle_session_ttl)])
+        if args.log_level is not None:
+            command_args.extend(["--log-level", parse_log_level(args.log_level)])
 
     backend_env = _backend_subprocess_env() or {}
     backend_env["GDB_MCP_TOOL_PROFILE"] = profile.canonical_name
+    if args.log_level is not None:
+        backend_env["GDB_MCP_LOG_LEVEL"] = parse_log_level(args.log_level)
     backend = LazyBackend(
         command=command,
         args=command_args,

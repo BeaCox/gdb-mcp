@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import ToolAnnotations
 
 from ..mi import c_escape
@@ -47,7 +48,7 @@ def configure(
 
 
 def register_tools(
-    mcp: FastMCP[Any],
+    mcp: MCPServer[Any],
     *,
     read_only: ToolAnnotations,
     session_mutation: ToolAnnotations,
@@ -90,8 +91,31 @@ def _require_unsafe(name: str) -> None:
 
 
 def _require_single_line(name: str, value: str) -> None:
-    if not isinstance(value, str) or not value.strip() or "\n" in value or "\r" in value:
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or "\n" in value
+        or "\r" in value
+        or "\0" in value
+    ):
         raise ValueError(f"{name} must be a non-empty single-line string")
+
+
+def _validate_debuginfod_url(url: str) -> str:
+    _require_single_line("debuginfod_urls entry", url)
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("debuginfod_urls entries must be http:// or https:// URLs")
+    return url.strip()
+
+
+def _sanitize_url_for_record(url: str) -> str:
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = f"{host}:{parsed.port}" if parsed.port else host
+    return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
 
 
 async def _apply_profile_command(
@@ -145,14 +169,18 @@ async def gdb_apply_init_profile(
     source_directories: list[str] | None = None,
     sysroot: str | None = None,
     solib_search_path: str | None = None,
+    substitute_paths: dict[str, str] | None = None,
+    debug_file_directories: list[str] | None = None,
+    debuginfod_enabled: bool | None = None,
+    debuginfod_urls: list[str] | None = None,
     init_file: str | None = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
     """Apply and record a named initialization profile for an existing session.
 
-    ``source_paths`` and ``remote_paths`` only alter GDB lookup configuration.
-    ``init_file`` runs GDB's ``source`` command and is therefore available only
-    when unsafe mode is explicitly enabled.
+    ``source_paths``, ``remote_paths``, and ``debug_info`` only alter GDB lookup
+    configuration. ``init_file`` runs GDB's ``source`` command and is therefore
+    available only when unsafe mode is explicitly enabled.
     """
 
     try:
@@ -197,6 +225,89 @@ async def gdb_apply_init_profile(
                 "sysroot": sysroot,
                 "solib_search_path": solib_search_path,
             }
+        elif profile == "debug_info":
+            if (
+                not substitute_paths
+                and not debug_file_directories
+                and debuginfod_enabled is None
+                and not debuginfod_urls
+            ):
+                raise ValueError(
+                    "debug_info requires at least one of substitute_paths, "
+                    "debug_file_directories, debuginfod_enabled, or debuginfod_urls"
+                )
+            if debuginfod_urls and debuginfod_enabled is not True:
+                raise ValueError(
+                    "debuginfod_urls requires debuginfod_enabled=true so remote "
+                    "debuginfod lookups remain explicitly opt-in"
+                )
+
+            applied_substitutions: dict[str, str] = {}
+            for src_prefix, dst_prefix in (substitute_paths or {}).items():
+                _require_single_line("substitute_paths source", src_prefix)
+                _require_single_line("substitute_paths target", dst_prefix)
+                commands.append(
+                    await _apply_profile_command(
+                        session,
+                        f"-gdb-set substitute-path {c_escape(src_prefix)} {c_escape(dst_prefix)}",
+                        timeout,
+                    )
+                )
+                applied_substitutions[src_prefix] = dst_prefix
+
+            applied_debug_dirs = list(debug_file_directories or [])
+            if applied_debug_dirs:
+                for directory in applied_debug_dirs:
+                    _require_single_line("debug_file_directories entry", directory)
+                joined_dirs = ":".join(applied_debug_dirs)
+                commands.append(
+                    await _apply_profile_command(
+                        session,
+                        f"-gdb-set debug-file-directory {c_escape(joined_dirs)}",
+                        timeout,
+                    )
+                )
+
+            sanitized_urls: list[str] = []
+            if debuginfod_enabled is not None:
+                mode = "on" if debuginfod_enabled else "off"
+                try:
+                    commands.append(
+                        await _apply_profile_command(
+                            session,
+                            f"-gdb-set debuginfod enabled {mode}",
+                            timeout,
+                        )
+                    )
+                except GdbMcpError as exc:
+                    raise GdbMcpError(
+                        f"{exc}; debuginfod may be unavailable in this GDB build—use "
+                        "debug_file_directories or substitute_paths as a local fallback"
+                    ) from exc
+
+            if debuginfod_urls:
+                validated_urls = [_validate_debuginfod_url(url) for url in debuginfod_urls]
+                sanitized_urls = [_sanitize_url_for_record(url) for url in validated_urls]
+                try:
+                    commands.append(
+                        await _apply_profile_command(
+                            session,
+                            f"-gdb-set debuginfod urls {c_escape(' '.join(validated_urls))}",
+                            timeout,
+                        )
+                    )
+                except GdbMcpError as exc:
+                    raise GdbMcpError(
+                        f"{exc}; symbol server configuration failed—use "
+                        "debug_file_directories or substitute_paths as a local fallback"
+                    ) from exc
+
+            configuration = {
+                "substitute_paths": applied_substitutions,
+                "debug_file_directories": applied_debug_dirs,
+                "debuginfod_enabled": debuginfod_enabled,
+                "debuginfod_urls": sanitized_urls,
+            }
         elif profile == "init_file":
             _require_unsafe("gdb_apply_init_profile(profile='init_file')")
             if init_file is None:
@@ -211,7 +322,9 @@ async def gdb_apply_init_profile(
             )
             configuration = {"init_file": init_file}
         else:
-            raise ValueError("profile must be one of: source_paths, remote_paths, init_file")
+            raise ValueError(
+                "profile must be one of: source_paths, remote_paths, debug_info, init_file"
+            )
 
         session.record_profile(profile, configuration)
         return {
@@ -301,7 +414,25 @@ async def gdb_launch_gdbserver(
 
     manager = _require_manager()
     gdbserver_process: asyncio.subprocess.Process | None = None
+    drain_task: asyncio.Task[None] | None = None
     session: GdbSession | None = None
+
+    async def cleanup_launch() -> None:
+        if session is not None:
+            try:
+                await manager.close(session.session_id)
+            except Exception:
+                await session.close()
+            return
+        if drain_task is not None and not drain_task.done():
+            drain_task.cancel()
+        await _terminate_process(gdbserver_process)
+        if drain_task is not None:
+            try:
+                await drain_task
+            except asyncio.CancelledError:
+                pass
+
     try:
         await report_progress(context, 0, "Launching gdbserver")
         gdbserver_process, banner, drain_task = await launch_gdbserver(
@@ -345,14 +476,11 @@ async def gdb_launch_gdbserver(
             "gdbserver_output": banner.strip(),
             "command": result,
         }
+    except asyncio.CancelledError:
+        await cleanup_launch()
+        raise
     except Exception as exc:
-        if session is not None:
-            try:
-                await manager.close(session.session_id)
-            except Exception:
-                await session.close()
-        else:
-            await _terminate_process(gdbserver_process)
+        await cleanup_launch()
         return _error(exc)
 
 

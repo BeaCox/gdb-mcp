@@ -96,13 +96,13 @@ The tagged Git form remains available when you want to pin an exact repository
 snapshot before or instead of a PyPI release:
 
 ```bash
-uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.4.0 gdb-mcp
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.5.0 gdb-mcp
 ```
 
 ### Codex
 
 ```bash
-codex plugin marketplace add BeaCox/gdb-mcp --ref v0.4.0
+codex plugin marketplace add BeaCox/gdb-mcp --ref v0.5.0
 codex plugin add gdb-mcp@beacox
 ```
 
@@ -110,13 +110,13 @@ Or register the MCP server directly:
 
 ```bash
 codex mcp add gdb -- \
-  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.4.0 gdb-mcp
+  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.5.0 gdb-mcp
 ```
 
 ### Claude Code
 
 ```bash
-claude plugin marketplace add BeaCox/gdb-mcp@v0.4.0
+claude plugin marketplace add BeaCox/gdb-mcp@v0.5.0
 claude plugin install gdb-mcp@beacox --scope user
 ```
 
@@ -124,7 +124,7 @@ Or register the MCP server directly:
 
 ```bash
 claude mcp add --scope user gdb -- \
-  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.4.0 gdb-mcp
+  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.5.0 gdb-mcp
 ```
 
 ### From a Checkout
@@ -141,8 +141,8 @@ claude mcp add --scope user gdb -- uv run gdb-mcp
 The universal installer is also available:
 
 ```bash
-uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.4.0 gdb-mcp --install
-uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.4.0 gdb-mcp --install --direct
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.5.0 gdb-mcp --install
+uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.5.0 gdb-mcp --install --direct
 ```
 
 Print portable client configuration:

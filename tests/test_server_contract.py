@@ -246,14 +246,14 @@ class ServerContractTests(unittest.TestCase):
         ):
             self.assertIn(name, names)
         rr_tool = next(tool for tool in tools if tool.name == "gdb_rr_record")
-        rr_properties = rr_tool.inputSchema.get("properties", {})
+        rr_properties = rr_tool.input_schema.get("properties", {})
         self.assertIn("disable_syscall_buffer", rr_properties)
         self.assertNotIn("disable_perf_counters", rr_properties)
         for tool in tools:
             with self.subTest(tool=tool.name):
                 self.assertTrue(tool.description)
-                self.assertEqual(tool.inputSchema.get("type"), "object")
-                self.assertEqual(tool.outputSchema.get("type"), "object")
+                self.assertEqual(tool.input_schema.get("type"), "object")
+                self.assertEqual(tool.output_schema.get("type"), "object")
                 self.assertIsNotNone(tool.annotations)
 
     def test_tools_reference_covers_public_mcp_tools(self) -> None:
@@ -283,8 +283,8 @@ class ServerContractTests(unittest.TestCase):
         self.assertEqual(sorted(expected - by_uri.keys()), [])
         for uri in expected:
             with self.subTest(uri=uri):
-                self.assertEqual(by_uri[uri].mimeType, "application/json")
-                contents = await mcp.read_resource(uri)
+                self.assertEqual(by_uri[uri].mime_type, "application/json")
+                contents = list(await mcp.read_resource(uri))
                 self.assertEqual(len(contents), 1)
                 document = json.loads(contents[0].content)
                 self.assertIn("summary", document)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from .shared import (
@@ -20,7 +20,7 @@ from .shared import (
 
 
 def register_tools(
-    mcp: FastMCP[Any],
+    mcp: MCPServer[Any],
     *,
     read_only: ToolAnnotations,
     session_mutation: ToolAnnotations,

@@ -14,6 +14,10 @@ class MIParseError(ValueError):
     """Raised when a GDB/MI output line cannot be parsed."""
 
 
+MAX_NESTING_DEPTH = 64
+MAX_LINE_LENGTH = 16 * 1024 * 1024
+
+
 @dataclass(frozen=True)
 class MIRecord:
     """One parsed GDB/MI output record."""
@@ -52,17 +56,33 @@ RECORD_MARKERS = {
 }
 
 
+_C_ESCAPE_MAP = {
+    "\\": "\\\\",
+    '"': '\\"',
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+    "\a": "\\a",
+    "\b": "\\b",
+    "\f": "\\f",
+    "\v": "\\v",
+    "\0": "\\000",
+}
+
+
 def c_escape(value: str) -> str:
     """Return a GDB/MI compatible C string literal."""
 
-    escaped = (
-        value.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
-    return f'"{escaped}"'
+    parts: list[str] = []
+    for char in value:
+        mapped = _C_ESCAPE_MAP.get(char)
+        if mapped is not None:
+            parts.append(mapped)
+        elif ord(char) < 0x20:
+            parts.append(f"\\x{ord(char):02x}")
+        else:
+            parts.append(char)
+    return f'"{"".join(parts)}"'
 
 
 def quote_cli_command(command: str) -> str:
@@ -71,10 +91,19 @@ def quote_cli_command(command: str) -> str:
     return f"-interpreter-exec console {c_escape(command)}"
 
 
-def parse_mi_record(line: str) -> MIRecord:
+def parse_mi_record(
+    line: str,
+    *,
+    max_line_length: int = MAX_LINE_LENGTH,
+    max_depth: int = MAX_NESTING_DEPTH,
+) -> MIRecord:
     """Parse one GDB/MI output line."""
 
     raw = line.rstrip("\r\n")
+    if len(raw) > max_line_length:
+        raise MIParseError(
+            f"MI output line length {len(raw)} exceeds limit {max_line_length}"
+        )
     if raw.strip() == "(gdb)":
         return MIRecord(kind="prompt", raw=raw)
 
@@ -90,7 +119,7 @@ def parse_mi_record(line: str) -> MIRecord:
     payload = raw[index + 1 :]
 
     if marker in STREAM_MARKERS:
-        parser = _Parser(payload)
+        parser = _Parser(payload, max_depth=max_depth)
         text = parser.parse_c_string()
         parser.expect_end()
         return MIRecord(
@@ -104,7 +133,7 @@ def parse_mi_record(line: str) -> MIRecord:
     if marker in RECORD_MARKERS:
         if "," in payload:
             record_class, rest = payload.split(",", 1)
-            results = _Parser(rest).parse_results_until_end()
+            results = _Parser(rest, max_depth=max_depth).parse_results_until_end()
         else:
             record_class = payload
             results = {}
@@ -120,9 +149,11 @@ def parse_mi_record(line: str) -> MIRecord:
 
 
 class _Parser:
-    def __init__(self, text: str):
+    def __init__(self, text: str, *, max_depth: int = MAX_NESTING_DEPTH):
         self.text = text
         self.pos = 0
+        self.depth = 0
+        self.max_depth = max_depth
 
     def parse_results_until_end(self) -> dict[str, Any]:
         results = self.parse_results(stop_chars="")
@@ -148,49 +179,58 @@ class _Parser:
         if char == '"':
             return self.parse_c_string()
         if char == "{":
-            self.pos += 1
-            value = self.parse_results(stop_chars="}")
-            self.expect("}")
-            return value
+            self.depth += 1
+            if self.depth > self.max_depth:
+                raise self.error("maximum MI nesting depth exceeded")
+            try:
+                self.pos += 1
+                value = self.parse_results(stop_chars="}")
+                self.expect("}")
+                return value
+            finally:
+                self.depth -= 1
         if char == "[":
             return self.parse_list()
         return self.parse_bare()
 
     def parse_list(self) -> list[Any] | dict[str, Any]:
-        self.expect("[")
-        if self.peek_or_none() == "]":
-            self.pos += 1
-            return []
+        self.depth += 1
+        if self.depth > self.max_depth:
+            raise self.error("maximum MI nesting depth exceeded")
+        try:
+            self.expect("[")
+            if self.peek_or_none() == "]":
+                self.pos += 1
+                return []
 
-        items: list[Any] = []
-        result_items: list[tuple[str, Any]] = []
-        saw_result = False
-        saw_value = False
+            items: list[Any] = []
+            result_items: list[tuple[str, Any]] = []
+            saw_result = False
+            saw_value = False
 
-        first = True
-        while not self.at_end() and self.peek() != "]":
-            if not first:
-                self.expect(",")
-            first = False
+            first = True
+            while not self.at_end() and self.peek() != "]":
+                if not first:
+                    self.expect(",")
+                first = False
 
-            if self.next_value_is_result():
-                saw_result = True
-                key = self.parse_identifier()
-                self.expect("=")
-                result_items.append((key, self.parse_value()))
-            else:
-                saw_value = True
-                items.append(self.parse_value())
+                if self.next_value_is_result():
+                    saw_result = True
+                    key = self.parse_identifier()
+                    self.expect("=")
+                    result_items.append((key, self.parse_value()))
+                else:
+                    saw_value = True
+                    items.append(self.parse_value())
 
-        self.expect("]")
-        if saw_result and not saw_value:
-            keys = {key for key, _ in result_items}
-            if len(keys) == 1:
+            self.expect("]")
+            if saw_result and not saw_value:
                 return [{key: value} for key, value in result_items]
-            return [{key: value} for key, value in result_items]
-        if saw_result:
-            items.extend({key: value} for key, value in result_items)
-        return items
+            if saw_result:
+                items.extend({key: value} for key, value in result_items)
+            return items
+        finally:
+            self.depth -= 1
 
     def parse_c_string(self) -> str:
         self.expect('"')
@@ -219,6 +259,7 @@ class _Parser:
                 "v": "\v",
                 "\\": "\\",
                 '"': '"',
+                "'": "'",
             }
             if esc in simple:
                 chars.append(simple[esc])
@@ -228,6 +269,7 @@ class _Parser:
                     len(digits) < 3
                     and not self.at_end()
                     and self.text[self.pos] in "01234567"
+                    and int("".join(digits) + self.text[self.pos], 8) <= 0o377
                 ):
                     digits.append(self.text[self.pos])
                     self.pos += 1

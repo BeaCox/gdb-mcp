@@ -91,6 +91,7 @@ def replace_release_tags(text: str, version: str) -> str:
         f"{PACKAGE_SOURCE_PREFIX}{tag}",
         text,
     )
+    text = re.sub(rf"(BeaCox/gdb-mcp@){TAG_RE}", rf"\g<1>{tag}", text)
     return re.sub(rf"(--ref\s+){TAG_RE}", rf"\g<1>{tag}", text)
 
 

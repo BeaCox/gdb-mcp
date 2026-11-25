@@ -103,8 +103,8 @@ class DistributionDocsTests(unittest.TestCase):
         active, completed = todo.split("## Completed milestones", maxsplit=1)
 
         self.assertIn(f"Current released version: `{project_version()}`", todo)
-        self.assertIn("## Now — 0.5.0 release and contract stability", active)
-        self.assertIn("## Next — 0.6.0 agent effectiveness and maintainability", active)
+        self.assertIn("## Now — 0.6.0 deployment hardening and contract automation", active)
+        self.assertIn("## Next — 0.7.0 parser corpus and workflow depth", active)
         self.assertIn("## Later — ecosystem options", active)
         self.assertIn("## Non-goals for the current roadmap", active)
         self.assertGreaterEqual(active.count("- [ ]"), 8)

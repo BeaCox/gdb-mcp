@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from .tool_profiles import ADVANCED_TOOL_GROUPS, CORE_TOOL_PROFILE
 
@@ -524,7 +524,7 @@ def _make_resource_reader(uri: str):
     return read_resource
 
 
-def register_resources(mcp: FastMCP[Any]) -> None:
+def register_resources(mcp: MCPServer[Any]) -> None:
     """Register static workflow and reference resources on an MCP server."""
 
     for resource in RESOURCE_INDEX:

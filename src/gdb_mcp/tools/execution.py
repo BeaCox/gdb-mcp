@@ -10,11 +10,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import ToolAnnotations
 
 from ..mi import c_escape
-from ..session import GdbMcpError, _truncate_text
+from ..session import GdbMcpError, GdbSession, PolicyDeniedError, _truncate_text
 from .progress import report_progress
 from .shared import (
     _error,
@@ -75,7 +75,7 @@ def _rr_perf_permission_details(
 
 
 def register_tools(
-    mcp: FastMCP[Any],
+    mcp: MCPServer[Any],
     *,
     read_only: ToolAnnotations,
     session_mutation: ToolAnnotations,
@@ -118,6 +118,15 @@ async def gdb_attach(
     """Attach GDB to an existing local process."""
 
     created_session = False
+    session: GdbSession | None = None
+
+    async def close_created_session() -> None:
+        if created_session and session is not None:
+            try:
+                await manager.close(session.session_id)
+            except Exception:
+                await session.close()
+
     try:
         if pid <= 0:
             raise ValueError("pid must be a positive integer")
@@ -145,7 +154,11 @@ async def gdb_attach(
                 "command": payload,
             }
         return {"ok": payload["ok"], "session": session.describe(), "command": payload}
+    except asyncio.CancelledError:
+        await close_created_session()
+        raise
     except Exception as exc:
+        await close_created_session()
         return _error(exc)
 
 
@@ -160,6 +173,15 @@ async def gdb_load_core(
     """Load a core dump into a GDB session."""
 
     created_session = False
+    session: GdbSession | None = None
+
+    async def close_created_session() -> None:
+        if created_session and session is not None:
+            try:
+                await manager.close(session.session_id)
+            except Exception:
+                await session.close()
+
     try:
         _require_cli_target("core_path", core_path)
         if program is not None:
@@ -189,7 +211,11 @@ async def gdb_load_core(
         if payload["ok"]:
             session.state = "stopped"
         return {"ok": payload["ok"], "session": session.describe(), "command": payload}
+    except asyncio.CancelledError:
+        await close_created_session()
+        raise
     except Exception as exc:
+        await close_created_session()
         return _error(exc)
 
 
@@ -204,7 +230,7 @@ async def gdb_execute(
 
     try:
         if not runtime_config.allow_unsafe_execute:
-            raise GdbMcpError(
+            raise PolicyDeniedError(
                 "gdb_execute is disabled by default because arbitrary GDB commands "
                 "can call functions, write memory, or execute shell commands. "
                 "Restart gdb-mcp with --unsafe or GDB_MCP_ALLOW_UNSAFE=1."
@@ -425,6 +451,7 @@ async def gdb_rr_record(
 ) -> dict[str, Any]:
     """Record one program run with rr and return the trace directory."""
 
+    auto_parent: Path | None = None
     try:
         await report_progress(context, 0, "Preparing rr recording")
         _require_cli_target("program", program)
@@ -439,7 +466,11 @@ async def gdb_rr_record(
         if resolved_rr is None:
             raise GdbMcpError(f"rr executable not found: {rr_path}")
 
-        actual_trace_dir = trace_dir or _default_rr_trace_dir(program)
+        if trace_dir is not None:
+            actual_trace_dir = trace_dir
+        else:
+            actual_trace_dir = _default_rr_trace_dir(program)
+            auto_parent = Path(actual_trace_dir).parent
         command = [resolved_rr, "record"]
         if disable_syscall_buffer:
             command.append("--no-syscall-buffer")
@@ -457,9 +488,13 @@ async def gdb_rr_record(
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
         except asyncio.CancelledError:
             await _terminate_process(process)
+            if auto_parent is not None:
+                await asyncio.to_thread(shutil.rmtree, auto_parent, True)
             raise
         except asyncio.TimeoutError:
             await _terminate_process(process)
+            if auto_parent is not None:
+                await asyncio.to_thread(shutil.rmtree, auto_parent, True)
             raise TimeoutError(f"rr record timed out after {timeout} seconds") from None
 
         output = stdout.decode(errors="replace")
@@ -472,6 +507,8 @@ async def gdb_rr_record(
         )
         trace_exists = await asyncio.to_thread(os.path.exists, actual_trace_dir)
         if not trace_exists:
+            if auto_parent is not None:
+                await asyncio.to_thread(shutil.rmtree, auto_parent, True)
             response = {
                 "ok": False,
                 "error": "rr did not create a trace directory",
@@ -496,6 +533,8 @@ async def gdb_rr_record(
             "truncated": truncated,
         }
     except Exception as exc:
+        if auto_parent is not None:
+            await asyncio.to_thread(shutil.rmtree, auto_parent, True)
         return _error(exc)
 
 

@@ -354,6 +354,100 @@ class GdbSessionAsyncTests(unittest.TestCase):
         finally:
             await manager.close_all()
 
+    def test_idle_session_ttl_expires_idle_only_and_stops_reaper(self) -> None:
+        asyncio.run(self._test_idle_ttl())
+
+    async def _test_idle_ttl(self) -> None:
+        now = 1000.0
+
+        def fake_clock() -> float:
+            return now
+
+        manager = SessionManager(
+            max_sessions=4,
+            idle_session_ttl_seconds=30.0,
+            clock=fake_clock,
+        )
+        manager.start_reaper(interval_seconds=60.0)
+        try:
+            idle_session = await manager.create(gdb_path=str(self.fake_gdb))
+            busy_session = await manager.create(
+                gdb_path=str(self.fake_gdb),
+                env={"FAKE_GDB_HOLD_RUN": "1"},
+            )
+            running = asyncio.create_task(
+                busy_session.execute("-exec-run", timeout=5.0, wait_for_stop=True)
+            )
+            await asyncio.sleep(0.05)
+
+            now += 40.0
+            expired = await manager.prune_idle()
+            self.assertEqual(
+                [item["result"]["session_id"] for item in expired],
+                [idle_session.session_id],
+            )
+            self.assertFalse(idle_session.is_alive())
+            self.assertEqual(idle_session.state, "closed")
+            self.assertTrue(busy_session.is_alive())
+
+            running.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await running
+
+            now += 40.0
+            expired_after_cancel = await manager.prune_idle()
+            self.assertEqual(
+                [item["result"]["session_id"] for item in expired_after_cancel],
+                [busy_session.session_id],
+            )
+        finally:
+            await manager.close_all()
+        self.assertIsNone(manager._reaper_task)
+
+    def test_dead_sessions_are_pruned_before_max_sessions(self) -> None:
+        asyncio.run(self._test_dead_pruning())
+
+    async def _test_dead_pruning(self) -> None:
+        manager = SessionManager(max_sessions=1)
+        try:
+            first = await manager.create(gdb_path=str(self.fake_gdb))
+            assert first.process is not None
+            first.process.terminate()
+            await first.process.wait()
+            await asyncio.sleep(0.05)
+
+            second = await manager.create(gdb_path=str(self.fake_gdb))
+            self.assertNotEqual(first.session_id, second.session_id)
+            listed = await manager.list()
+            self.assertEqual([item["session_id"] for item in listed], [second.session_id])
+        finally:
+            await manager.close_all()
+
+    def test_bounded_history_retention_and_large_mi_lines(self) -> None:
+        asyncio.run(self._test_history_and_large_lines())
+
+    async def _test_history_and_large_lines(self) -> None:
+        manager = SessionManager(
+            max_sessions=2,
+            max_recent_records=5,
+            max_recent_commands=3,
+        )
+        try:
+            session = await manager.create(gdb_path=str(self.fake_gdb))
+            for idx in range(5):
+                res = await session.execute(f"info symbol {idx}", timeout=2.0)
+                self.assertEqual(res.result_record.record_class, "done")
+            self.assertEqual(len(session.recent_commands(10)), 3)
+            self.assertEqual(len(session.recent_records(10)), 5)
+
+            # Verify >128KiB output line does not break the reader loop.
+            big_arg = "x" * 140_000
+            big = await session.execute(f"echo {big_arg}", timeout=2.0)
+            self.assertIsNotNone(big.result_record)
+            self.assertTrue(session.is_alive())
+        finally:
+            await manager.close_all()
+
 
 if __name__ == "__main__":
     unittest.main()

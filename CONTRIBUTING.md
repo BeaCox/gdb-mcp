@@ -18,7 +18,8 @@ CI does not depend only on host debugger behavior.
 ## Pull Requests
 
 - Keep tools explicit about the required `session_id`.
-- Preserve structured return shapes and MCP tool metadata.
+- Preserve structured return shapes and MCP tool metadata (see
+  [docs/COMPATIBILITY_CONTRACT.md](docs/COMPATIBILITY_CONTRACT.md)).
 - Add regression tests for MI parsing, lifecycle, or process cleanup changes.
 - Avoid writing logs to stdout because stdio MCP reserves stdout for protocol data.
 - Document new environment variables, transports, and security-sensitive behavior.

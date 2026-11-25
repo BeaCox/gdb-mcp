@@ -9,11 +9,12 @@ import shutil  # noqa: F401 - kept for compatibility with callers patching this 
 from contextlib import asynccontextmanager
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from .config import ServerConfig, _env_bool
-from .http_security import configure_http_security
+from .http_security import HTTP_TRANSPORTS, configure_http_security
+from .observability import logger, parse_log_level
 from .prompts import register_prompts
 from .resources import register_resources
 from .session import CommandResult, GdbMcpError, GdbSession, SessionManager, _truncate_text
@@ -30,22 +31,27 @@ from .tools import shared as _shared_tools
 _COMPAT_EXPORTS = (CommandResult, GdbMcpError, GdbSession, _truncate_text)
 
 runtime_config = ServerConfig.from_env()
+logger.set_level(runtime_config.log_level)
 manager = SessionManager(
     max_sessions=runtime_config.max_sessions,
     output_limit_chars=runtime_config.output_limit_chars,
+    idle_session_ttl_seconds=runtime_config.idle_session_ttl_seconds,
+    max_recent_records=runtime_config.max_recent_records,
+    max_recent_commands=runtime_config.max_recent_commands,
 )
 _shared_tools.configure(manager=manager, runtime_config=runtime_config)
 
 
 @asynccontextmanager
-async def _lifespan(_: FastMCP[Any]):
+async def _lifespan(_: MCPServer[Any]):
+    manager.start_reaper()
     try:
         yield
     finally:
         await manager.close_all()
 
 
-mcp = FastMCP(
+mcp = MCPServer(
     "gdb-mcp",
     instructions=(
         "Create an explicit GDB session before debugging. Prefer the dedicated "
@@ -346,6 +352,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "advanced:<group>[,<group>]"
         ),
     )
+    parser.add_argument(
+        "--idle-session-ttl",
+        type=float,
+        default=runtime_config.idle_session_ttl_seconds,
+        help="Optional idle session TTL in seconds (disabled by default)",
+    )
+    parser.add_argument(
+        "--log-level",
+        default=runtime_config.log_level,
+        help="Operational stderr log level: off (default), error, warning, info, debug",
+    )
     return parser
 
 
@@ -354,8 +371,9 @@ def main() -> None:
 
     unsafe_enabled = runtime_config.allow_unsafe_execute or args.unsafe
     try:
+        log_level = parse_log_level(args.log_level)
         asyncio.run(apply_tool_profile(args.tool_profile))
-        configure_http_security(
+        transport_security = configure_http_security(
             mcp,
             transport=args.transport,
             host=args.host,
@@ -374,11 +392,23 @@ def main() -> None:
     runtime_config.allow_unsafe_execute = unsafe_enabled
     runtime_config.max_sessions = max(0, args.max_sessions)
     runtime_config.output_limit_chars = max(10_000, args.output_limit_chars)
+    runtime_config.idle_session_ttl_seconds = (
+        args.idle_session_ttl if args.idle_session_ttl and args.idle_session_ttl > 0 else None
+    )
+    runtime_config.log_level = log_level
+    logger.set_level(log_level)
     manager.max_sessions = runtime_config.max_sessions
     manager.output_limit_chars = runtime_config.output_limit_chars
-    mcp.settings.host = args.host
-    mcp.settings.port = args.port
-    mcp.run(transport=args.transport)
+    manager.idle_session_ttl_seconds = runtime_config.idle_session_ttl_seconds
+    if args.transport in HTTP_TRANSPORTS:
+        mcp.run(
+            transport=args.transport,
+            host=args.host,
+            port=args.port,
+            transport_security=transport_security,
+        )
+    else:
+        mcp.run(transport=args.transport)
 
 
 if __name__ == "__main__":

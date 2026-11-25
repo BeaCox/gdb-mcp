@@ -12,12 +12,17 @@ import shutil
 import time
 import uuid
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from anyio import CancelScope
 
 from .mi import MIParseError, MIRecord, c_escape, parse_mi_record, quote_cli_command
+from .observability import logger
+
+GDB_STREAM_LIMIT_BYTES = 4 * 1024 * 1024
+MAX_GDB_LINE_BYTES = 16 * 1024 * 1024
 
 
 class GdbMcpError(RuntimeError):
@@ -30,6 +35,14 @@ class GdbNotFound(GdbMcpError):
 
 class SessionNotFound(GdbMcpError):
     """Raised when a session ID is unknown."""
+
+
+class PolicyDeniedError(GdbMcpError):
+    """Raised when an operation is disallowed by server safety policy."""
+
+
+class SessionLimitError(GdbMcpError):
+    """Raised when the live session limit has been reached."""
 
 
 def _wall_time() -> float:
@@ -289,6 +302,9 @@ class GdbSession:
     env: dict[str, str] | None = None
     output_limit_chars: int = 100_000
     rr_trace_dir: str | None = None
+    max_recent_records: int = 500
+    max_recent_commands: int = 200
+    clock: Callable[[], float] = _wall_time
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: float = field(default_factory=_wall_time)
     process: asyncio.subprocess.Process | None = None
@@ -315,6 +331,10 @@ class GdbSession:
     _recent_commands: deque[dict[str, Any]] = field(
         default_factory=lambda: deque(maxlen=200),
     )
+
+    def __post_init__(self) -> None:
+        self._recent_records = deque(maxlen=max(1, self.max_recent_records))
+        self._recent_commands = deque(maxlen=max(1, self.max_recent_commands))
 
     async def start(self, startup_timeout: float = 10.0) -> dict[str, Any]:
         if self.state in {"closing", "closed"} or self._closing:
@@ -351,6 +371,7 @@ class GdbSession:
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=self.cwd,
                 env=env,
+                limit=GDB_STREAM_LIMIT_BYTES,
             )
             self._reader_task = asyncio.create_task(
                 self._reader_loop(),
@@ -510,6 +531,9 @@ class GdbSession:
     def is_alive(self) -> bool:
         return self.process is not None and self.process.returncode is None
 
+    def is_busy(self) -> bool:
+        return bool(self._pending) or self.state == "running"
+
     def describe(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
@@ -545,7 +569,7 @@ class GdbSession:
             {
                 "name": name,
                 "configuration": configuration,
-                "applied_at": _wall_time(),
+                "applied_at": self.clock(),
             }
         )
 
@@ -606,7 +630,7 @@ class GdbSession:
         token = self._token
         self._token += 1
         future: asyncio.Future[CommandResult] = asyncio.get_running_loop().create_future()
-        started_at = _wall_time()
+        started_at = self.clock()
         pending = _PendingCommand(
             token=token,
             display_command=display_command,
@@ -641,6 +665,13 @@ class GdbSession:
                 status="cancelled",
                 error="Command task cancelled",
             )
+            logger.emit(
+                "info",
+                "command.cancelled",
+                session_id=self.session_id,
+                token=token,
+                command_family=_command_family(display_command),
+            )
             if (
                 wait_for_stop
                 and display_command != "-exec-interrupt"
@@ -662,6 +693,14 @@ class GdbSession:
                 error=f"Timed out after {timeout} seconds",
                 timed_out=True,
             )
+            logger.emit(
+                "warning",
+                "command.timeout",
+                session_id=self.session_id,
+                token=token,
+                command_family=_command_family(display_command),
+                timeout_seconds=timeout,
+            )
             return CommandResult(
                 display_command,
                 pending.records,
@@ -670,30 +709,92 @@ class GdbSession:
                 timed_out=True,
                 error=f"Timed out after {timeout} seconds",
             )
-        except (BrokenPipeError, ConnectionResetError) as exc:
+        except (BrokenPipeError, ConnectionResetError, OSError) as exc:
             self._pending.pop(token, None)
+            future.cancel()
             self._finish_command_history(pending, status="error", error=str(exc))
+            logger.emit(
+                "error",
+                "command.transport_error",
+                session_id=self.session_id,
+                token=token,
+                command_family=_command_family(display_command),
+                error_type=type(exc).__name__,
+            )
             return CommandResult(display_command, pending.records, error=str(exc))
+
+    async def _readline_bounded(self, stream: asyncio.StreamReader) -> tuple[bytes, bool]:
+        preview = bytearray()
+        preview_limit = min(max(1_024, self.output_limit_chars), 65_536)
+        total_bytes = 0
+        truncated = False
+        while True:
+            try:
+                chunk = await stream.readuntil(b"\n")
+            except asyncio.IncompleteReadError as exc:
+                if not truncated:
+                    return exc.partial, False
+                if len(preview) < preview_limit and exc.partial:
+                    preview.extend(exc.partial[: preview_limit - len(preview)])
+                return bytes(preview), True
+            except asyncio.LimitOverrunError as exc:
+                truncated = True
+                consume = exc.consumed if exc.consumed > 0 else 65_536
+                piece = await stream.readexactly(consume)
+                total_bytes += len(piece)
+                if len(preview) < preview_limit:
+                    preview.extend(piece[: preview_limit - len(preview)])
+                if total_bytes > MAX_GDB_LINE_BYTES:
+                    logger.emit(
+                        "error",
+                        "session.line_exceeded_max",
+                        session_id=self.session_id,
+                        bytes_read=total_bytes,
+                    )
+                    raise GdbMcpError("GDB output line exceeded maximum allowed size") from exc
+                continue
+
+            if not truncated:
+                return chunk, False
+            total_bytes += len(chunk)
+            if len(preview) < preview_limit:
+                preview.extend(chunk[: preview_limit - len(preview)])
+            logger.emit(
+                "warning",
+                "session.line_truncated",
+                session_id=self.session_id,
+                bytes_read=total_bytes,
+                preview_bytes=len(preview),
+            )
+            return bytes(preview), True
 
     async def _reader_loop(self) -> None:
         assert self.process is not None
         assert self.process.stdout is not None
         try:
             while True:
-                raw = await self.process.stdout.readline()
-                if raw == b"":
+                raw, line_truncated = await self._readline_bounded(self.process.stdout)
+                if raw == b"" and not line_truncated:
                     raise GdbMcpError("GDB stdout closed")
                 line = raw.decode(errors="replace").rstrip("\r\n")
-                try:
-                    record = parse_mi_record(line)
-                except MIParseError:
+                if line_truncated:
                     record = MIRecord(
                         kind="stream",
                         raw=line,
                         stream="log",
-                        text=line + "\n",
+                        text=f"{line}\n... truncated oversized GDB/MI output line\n",
                     )
-                self.last_activity_at = _wall_time()
+                else:
+                    try:
+                        record = parse_mi_record(line)
+                    except MIParseError:
+                        record = MIRecord(
+                            kind="stream",
+                            raw=line,
+                            stream="log",
+                            text=line + "\n",
+                        )
+                self.last_activity_at = self.clock()
                 self._route_record(record)
         except asyncio.CancelledError:
             raise
@@ -703,6 +804,13 @@ class GdbSession:
             self._fail_pending(exc)
             if self.state not in {"closing", "closed"}:
                 self.state = "exited"
+            logger.emit(
+                "warning",
+                "session.reader_stopped",
+                session_id=self.session_id,
+                state=self.state,
+                error_type=type(exc).__name__,
+            )
 
     def _route_record(self, record: MIRecord) -> None:
         if record.kind == "prompt":
@@ -797,13 +905,14 @@ class GdbSession:
     ) -> None:
         if pending.history_entry.get("finished_at") is not None:
             return
-        finished_at = _wall_time()
+        finished_at = self.clock()
         started_at = float(pending.history_entry["started_at"])
+        duration = max(0.0, finished_at - started_at)
         pending.history_entry.update(
             {
                 "status": status,
                 "finished_at": finished_at,
-                "duration_seconds": max(0.0, finished_at - started_at),
+                "duration_seconds": duration,
                 "result_class": (
                     pending.result_record.record_class
                     if pending.result_record is not None
@@ -815,15 +924,157 @@ class GdbSession:
                 "record_count": len(pending.records),
             }
         )
+        logger.emit(
+            "debug",
+            "command.finished",
+            session_id=self.session_id,
+            token=pending.token,
+            command_family=_command_family(pending.display_command),
+            status=status,
+            duration_seconds=duration,
+            timed_out=timed_out,
+        )
+
+
+def _command_family(command: str) -> str:
+    parts = command.strip().split(maxsplit=1)
+    return parts[0] if parts else ""
 
 
 class SessionManager:
-    def __init__(self, *, max_sessions: int = 8, output_limit_chars: int = 100_000) -> None:
+    def __init__(
+        self,
+        *,
+        max_sessions: int = 8,
+        output_limit_chars: int = 100_000,
+        idle_session_ttl_seconds: float | None = None,
+        max_recent_records: int = 500,
+        max_recent_commands: int = 200,
+        clock: Callable[[], float] = _wall_time,
+    ) -> None:
         self._sessions: dict[str, GdbSession] = {}
         self._lock = asyncio.Lock()
         self._creating = 0
+        self._reaper_task: asyncio.Task[None] | None = None
         self.max_sessions = max_sessions
         self.output_limit_chars = output_limit_chars
+        self.idle_session_ttl_seconds = idle_session_ttl_seconds
+        self.max_recent_records = max_recent_records
+        self.max_recent_commands = max_recent_commands
+        self._clock = clock
+
+    async def prune_dead(self) -> list[str]:
+        """Remove and clean up sessions whose GDB process has already exited."""
+
+        async with self._lock:
+            dead_ids = [
+                session_id
+                for session_id, session in self._sessions.items()
+                if not session.is_alive() and session.state not in {"created", "starting"}
+            ]
+            dead_sessions = [self._sessions.pop(session_id) for session_id in dead_ids]
+        if dead_sessions:
+            await asyncio.gather(
+                *(session.close() for session in dead_sessions),
+                return_exceptions=True,
+            )
+            for session_id in dead_ids:
+                logger.emit("info", "session.pruned_dead", session_id=session_id)
+        return dead_ids
+
+    async def prune_idle(
+        self,
+        max_idle_seconds: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Close non-busy live sessions that have been idle for at least TTL seconds."""
+
+        await self.prune_dead()
+        ttl = self.idle_session_ttl_seconds if max_idle_seconds is None else max_idle_seconds
+        if ttl is None or ttl < 0:
+            return []
+
+        now = self._clock()
+        candidates: list[tuple[str, GdbSession, dict[str, Any], float]] = []
+        async with self._lock:
+            for session_id, session in list(self._sessions.items()):
+                if session.is_busy():
+                    continue
+                idle = max(0.0, now - float(session.last_activity_at))
+                if idle < ttl:
+                    continue
+                self._sessions.pop(session_id, None)
+                candidates.append((session_id, session, session.describe(), idle))
+
+        closed: list[dict[str, Any]] = []
+        for session_id, session, description, idle in candidates:
+            try:
+                await session.close()
+                closed.append(
+                    {
+                        "session": description,
+                        "result": {"closed": True, "session_id": session_id},
+                        "idle_seconds": idle,
+                    }
+                )
+                logger.emit(
+                    "info",
+                    "session.expired_idle",
+                    session_id=session_id,
+                    idle_seconds=idle,
+                )
+            except Exception as exc:
+                closed.append(
+                    {
+                        "session": description,
+                        "error": str(exc),
+                        "idle_seconds": idle,
+                    }
+                )
+        return closed
+
+    def start_reaper(self, interval_seconds: float | None = None) -> None:
+        """Start automatic idle-session cleanup when an idle TTL is configured."""
+
+        ttl = self.idle_session_ttl_seconds
+        if ttl is None or ttl <= 0:
+            return
+        if self._reaper_task is not None and not self._reaper_task.done():
+            return
+        interval = (
+            interval_seconds
+            if interval_seconds is not None
+            else min(max(1.0, ttl / 4.0), 60.0)
+        )
+        self._reaper_task = asyncio.create_task(
+            self._reaper_loop(interval),
+            name="gdb-session-reaper",
+        )
+
+    async def stop_reaper(self) -> None:
+        task = self._reaper_task
+        self._reaper_task = None
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _reaper_loop(self, interval_seconds: float) -> None:
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                await self.prune_idle()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.emit(
+                    "warning",
+                    "session.reaper_error",
+                    error_type=type(exc).__name__,
+                )
 
     async def create(
         self,
@@ -837,17 +1088,22 @@ class SessionManager:
         rr_trace_dir: str | None = None,
         startup_timeout: float = 10.0,
     ) -> GdbSession:
+        await self.prune_dead()
+        if self.idle_session_ttl_seconds is not None and self.idle_session_ttl_seconds > 0:
+            await self.prune_idle()
+
         async with self._lock:
             live_count = sum(session.is_alive() for session in self._sessions.values())
             if (
                 self.max_sessions > 0
                 and live_count + self._creating >= self.max_sessions
             ):
-                raise GdbMcpError(
+                raise SessionLimitError(
                     f"Session limit reached ({self.max_sessions}); close a session first"
                 )
             self._creating += 1
 
+        now = self._clock()
         session = GdbSession(
             gdb_path=gdb_path,
             gdb_args=gdb_args or [],
@@ -857,6 +1113,11 @@ class SessionManager:
             env=env,
             output_limit_chars=self.output_limit_chars,
             rr_trace_dir=rr_trace_dir,
+            max_recent_records=self.max_recent_records,
+            max_recent_commands=self.max_recent_commands,
+            clock=self._clock,
+            created_at=now,
+            last_activity_at=now,
         )
         try:
             await session.start(startup_timeout=startup_timeout)
@@ -868,6 +1129,12 @@ class SessionManager:
         async with self._lock:
             self._creating -= 1
             self._sessions[session.session_id] = session
+        logger.emit(
+            "info",
+            "session.created",
+            session_id=session.session_id,
+            has_program=bool(program),
+        )
         return session
 
     async def add(self, session: GdbSession) -> None:
@@ -892,9 +1159,11 @@ class SessionManager:
         if session is None:
             raise SessionNotFound(f"Unknown GDB session: {session_id}")
         await session.close()
+        logger.emit("info", "session.closed", session_id=session_id)
         return {"closed": True, "session_id": session_id}
 
     async def close_all(self) -> None:
+        await self.stop_reaper()
         async with self._lock:
             sessions = list(self._sessions.values())
             self._sessions.clear()

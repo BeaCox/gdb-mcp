@@ -32,8 +32,8 @@ def _source_tree_env() -> dict[str, str]:
 
 
 def _tool_payload(result):
-    if result.structuredContent is not None:
-        return result.structuredContent
+    if result.structured_content is not None:
+        return result.structured_content
     text = "\n".join(
         item.text for item in result.content if getattr(item, "text", None) is not None
     )
@@ -383,7 +383,7 @@ class LazyProxyTests(unittest.TestCase):
             [str(resource.uri) for resource in resources.resources],
             [resource["uri"] for resource in list_proxy_resources()],
         )
-        self.assertEqual(contents.contents[0].mimeType, RESOURCE_MIME_TYPE)
+        self.assertEqual(contents.contents[0].mime_type, RESOURCE_MIME_TYPE)
         self.assertEqual(
             json.loads(contents.contents[0].text),
             read_reference_resource("gdb://workflows/basic"),

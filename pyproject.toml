@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gdb-mcp"
-version = "0.4.0"
+version = "0.5.0"
 description = "Multi-session Model Context Protocol server for GDB and gdbserver."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,7 +27,7 @@ classifiers = [
   "Topic :: Software Development :: Debuggers",
 ]
 dependencies = [
-  "mcp>=1.28.1,<2",
+  "mcp>=2.3.0,<3",
 ]
 
 [project.optional-dependencies]

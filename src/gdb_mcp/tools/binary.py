@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-import shutil
+import shutil  # noqa: F401 - kept for compatibility with callers patching this module
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from ..analysis import (
@@ -55,9 +55,16 @@ from ..analysis import (
 from ..analysis import (
     register_rows as _register_rows,
 )
-from ..pagination import paginate_items, paginate_text_lines
-from ..session import GdbSession, _truncate_text
+from ..pagination import paginate_items
+from ..session import GdbSession
 from .breakpoints import gdb_set_breakpoint
+from .elf import (
+    _command_status,
+    _profile_large_payload,
+    _resolve_elf_file,
+    _run_readelf,
+    collect_elf_bundle,
+)
 from .inspection import (
     gdb_backtrace,
     gdb_current_location,
@@ -72,19 +79,17 @@ from .shared import (
     _error,
     _mi_eval_expression_command,
     _mi_read_memory_bytes_command,
-    _require_cli_target,
     _require_max_frames,
     _require_output_profile,
     _require_read_expression,
     _require_single_line,
     _result,
     manager,
-    runtime_config,
 )
 
 
 def register_tools(
-    mcp: FastMCP[Any],
+    mcp: MCPServer[Any],
     *,
     read_only: ToolAnnotations,
     session_mutation: ToolAnnotations,
@@ -147,71 +152,96 @@ async def _structured_mappings(session: GdbSession) -> tuple[dict[str, Any], lis
     return payload, mappings
 
 
-def _strip_large_fields(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _strip_large_fields(item)
-            for key, item in value.items()
-            if key not in {"raw", "console", "target", "log", "stdout", "stderr"}
-        }
-    if isinstance(value, list):
-        return [_strip_large_fields(item) for item in value]
-    return value
-
-
-def _command_status(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: payload.get(key)
-        for key in (
-            "ok",
-            "returncode",
-            "result_class",
-            "truncated",
-            "stdout_truncated",
-            "stderr_truncated",
-            "output_limit_chars",
-        )
-        if key in payload
-    }
-
-
-def _profile_large_payload(
+def _build_vmmap_payload(
+    session_id: str,
     payload: dict[str, Any],
-    output: str,
+    mappings: list[dict[str, Any]],
     *,
-    summary_fields: dict[str, Any] | None = None,
+    address: str | None = None,
+    module: str | None = None,
+    executable: bool = False,
+    writable: bool = False,
+    include_gaps: bool = False,
+    output: str = "structured",
+    cursor: str | None = None,
+    page_size: int | None = None,
+    address_payload: dict[str, Any] | None = None,
+    address_value: int | None = None,
 ) -> dict[str, Any]:
-    profile = _require_output_profile(output)
-    if profile == "raw":
-        return {**payload, "output_profile": "raw"}
-    if profile == "structured":
-        structured = _strip_large_fields(payload)
-        structured["output_profile"] = "structured"
-        return structured
-
-    keys = (
-        "ok",
-        "session_id",
-        "file_path",
-        "query",
-        "kind",
-        "module",
-        "entry_count",
-        "all_entry_count",
-        "symbol_count",
-        "mapping_count",
-        "all_mapping_count",
-        "section_count",
+    filtered = mappings
+    if address_value is not None:
+        filtered = [item for item in filtered if _address_in_mapping(address_value, item)]
+    if module:
+        lowered = module.lower()
+        filtered = [
+            item
+            for item in filtered
+            if lowered in str(item.get("objfile", "")).lower()
+            or lowered in str(item.get("name", "")).lower()
+        ]
+    if executable:
+        filtered = [item for item in filtered if "x" in str(item.get("perms", ""))]
+    if writable:
+        filtered = [item for item in filtered if "w" in str(item.get("perms", ""))]
+    page_default = max(1, len(filtered))
+    max_mapping_page_size = max(2_000, page_default)
+    paged_mappings, pagination = paginate_items(
+        filtered,
+        cursor=cursor,
+        page_size=page_size,
+        default_page_size=page_default,
+        max_page_size=max_mapping_page_size,
+        cursor_scope=(
+            f"session:{session_id}:vmmap:{address}:{module}:{executable}:{writable}"
+        ),
     )
-    summary = {
-        key: payload[key]
-        for key in keys
-        if key in payload
+
+    gaps: list[dict[str, str]] = []
+    if include_gaps:
+        ordered = sorted(
+            mappings,
+            key=lambda item: _parse_int(item.get("start")) or 0,
+        )
+        for left, right in zip(ordered, ordered[1:], strict=False):
+            left_end = _parse_int(left.get("end"))
+            right_start = _parse_int(right.get("start"))
+            if left_end is not None and right_start is not None and left_end < right_start:
+                gaps.append(
+                    {
+                        "start": hex(left_end),
+                        "end": hex(right_start),
+                        "size": hex(right_start - left_end),
+                    }
+                )
+    enriched = {
+        **payload,
+        "ok": bool(payload.get("ok")),
+        "filters": {
+            "address": address,
+            "module": module,
+            "executable": executable,
+            "writable": writable,
+        },
+        "address": _hex_or_none(address_value),
+        "address_evaluation": address_payload,
+        "mappings": paged_mappings,
+        "all_mapping_count": len(mappings),
+        "filtered_mapping_count": len(filtered),
+        "mapping_count": len(paged_mappings),
+        "pagination": pagination,
+        "gaps": gaps,
     }
-    summary["output_profile"] = "summary"
-    if summary_fields:
-        summary.update(summary_fields)
-    return summary
+    return _profile_large_payload(
+        enriched,
+        output,
+        summary_fields={
+            "filters": enriched["filters"],
+            "address": enriched["address"],
+            "mappings": paged_mappings[:20],
+            "gap_count": len(gaps),
+            "pagination": pagination,
+        },
+    )
 
 
 async def gdb_vmmap_structured(
@@ -239,83 +269,69 @@ async def gdb_vmmap_structured(
         if address is not None:
             address_payload, address_value = await _evaluate_address(session, address)
         payload, mappings = await _structured_mappings(session)
-        filtered = mappings
-        if address_value is not None:
-            filtered = [item for item in filtered if _address_in_mapping(address_value, item)]
-        if module:
-            lowered = module.lower()
-            filtered = [
-                item
-                for item in filtered
-                if lowered in str(item.get("objfile", "")).lower()
-                or lowered in str(item.get("name", "")).lower()
-            ]
-        if executable:
-            filtered = [item for item in filtered if "x" in str(item.get("perms", ""))]
-        if writable:
-            filtered = [item for item in filtered if "w" in str(item.get("perms", ""))]
-        page_default = max(1, len(filtered))
-        max_mapping_page_size = max(2_000, page_default)
-        paged_mappings, pagination = paginate_items(
-            filtered,
+        return _build_vmmap_payload(
+            session_id,
+            payload,
+            mappings,
+            address=address,
+            module=module,
+            executable=executable,
+            writable=writable,
+            include_gaps=include_gaps,
+            output=output,
             cursor=cursor,
             page_size=page_size,
-            default_page_size=page_default,
-            max_page_size=max_mapping_page_size,
-            cursor_scope=(
-                f"session:{session_id}:vmmap:{address}:{module}:"
-                f"{executable}:{writable}"
-            ),
-        )
-
-        gaps: list[dict[str, str]] = []
-        if include_gaps:
-            ordered = sorted(
-                mappings,
-                key=lambda item: _parse_int(item.get("start")) or 0,
-            )
-            for left, right in zip(ordered, ordered[1:], strict=False):
-                left_end = _parse_int(left.get("end"))
-                right_start = _parse_int(right.get("start"))
-                if left_end is not None and right_start is not None and left_end < right_start:
-                    gaps.append(
-                        {
-                            "start": hex(left_end),
-                            "end": hex(right_start),
-                            "size": hex(right_start - left_end),
-                        }
-                    )
-        payload = {
-            **payload,
-            "ok": bool(payload.get("ok")),
-            "filters": {
-                "address": address,
-                "module": module,
-                "executable": executable,
-                "writable": writable,
-            },
-            "address": _hex_or_none(address_value),
-            "address_evaluation": address_payload,
-            "mappings": paged_mappings,
-            "all_mapping_count": len(mappings),
-            "filtered_mapping_count": len(filtered),
-            "mapping_count": len(paged_mappings),
-            "pagination": pagination,
-            "gaps": gaps,
-        }
-        return _profile_large_payload(
-            payload,
-            output,
-            summary_fields={
-                "filters": payload["filters"],
-                "address": payload["address"],
-                "mappings": paged_mappings[:20],
-                "gap_count": len(gaps),
-                "pagination": pagination,
-            },
+            address_payload=address_payload,
+            address_value=address_value,
         )
     except Exception as exc:
         return _error(exc)
+
+
+async def _address_info_with_mappings(
+    session: GdbSession,
+    expression: str,
+    vmmap_payload: dict[str, Any],
+    mappings: list[dict[str, Any]],
+    *,
+    read_string: bool = True,
+    string_max_bytes: int = 256,
+) -> dict[str, Any]:
+    evaluation, address = await _evaluate_address(session, expression)
+    mapping_info = _address_mapping_info(address, mappings)
+    symbol: dict[str, Any] | None = None
+    string_payload: dict[str, Any] | None = None
+    string_value = ""
+    if address is not None:
+        symbol_result = _result(
+            session,
+            await session.execute(_cli_info_symbol_command(address), timeout=5.0),
+        )
+        symbol = {
+            "ok": symbol_result.get("ok"),
+            "console": symbol_result.get("console"),
+        }
+        if read_string and mapping_info is not None:
+            perms = str(mapping_info["mapping"].get("perms", ""))
+            if "r" in perms or not perms:
+                string_payload = await gdb_read_c_string(
+                    session.session_id,
+                    hex(address),
+                    max_bytes=string_max_bytes,
+                )
+                string_value = str(string_payload.get("string") or "")
+    return {
+        "ok": bool(evaluation.get("ok")),
+        "session_id": session.session_id,
+        "expression": expression,
+        "address": _hex_or_none(address),
+        "evaluation": evaluation,
+        "mapping_info": mapping_info,
+        "symbol": symbol,
+        "string": string_value,
+        "string_result": string_payload,
+        "vmmap_ok": vmmap_payload.get("ok"),
+    }
 
 
 async def gdb_address_info(
@@ -330,44 +346,117 @@ async def gdb_address_info(
         if not 1 <= string_max_bytes <= 4096:
             raise ValueError("string_max_bytes must be between 1 and 4096")
         session = await manager.get(session_id)
-        evaluation, address = await _evaluate_address(session, expression)
+        _require_read_expression("expression", expression)
         vmmap_payload, mappings = await _structured_mappings(session)
-        mapping_info = _address_mapping_info(address, mappings)
-        symbol: dict[str, Any] | None = None
-        string_payload: dict[str, Any] | None = None
-        string_value = ""
-        if address is not None:
-            symbol_result = _result(
-                session,
-                await session.execute(_cli_info_symbol_command(address), timeout=5.0),
-            )
-            symbol = {
-                "ok": symbol_result.get("ok"),
-                "console": symbol_result.get("console"),
-            }
-            if read_string and mapping_info is not None:
-                perms = str(mapping_info["mapping"].get("perms", ""))
-                if "r" in perms or not perms:
-                    string_payload = await gdb_read_c_string(
-                        session_id,
-                        hex(address),
-                        max_bytes=string_max_bytes,
-                    )
-                    string_value = str(string_payload.get("string") or "")
-        return {
-            "ok": bool(evaluation.get("ok")),
-            "session_id": session_id,
-            "expression": expression,
-            "address": _hex_or_none(address),
-            "evaluation": evaluation,
-            "mapping_info": mapping_info,
-            "symbol": symbol,
-            "string": string_value,
-            "string_result": string_payload,
-            "vmmap_ok": vmmap_payload.get("ok"),
-        }
+        return await _address_info_with_mappings(
+            session,
+            expression,
+            vmmap_payload,
+            mappings,
+            read_string=read_string,
+            string_max_bytes=string_max_bytes,
+        )
     except Exception as exc:
         return _error(exc)
+
+
+async def _telescope_with_mappings(
+    session: GdbSession,
+    address: str,
+    vmmap_payload: dict[str, Any],
+    mappings: list[dict[str, Any]],
+    *,
+    count: int = 8,
+    pointer_size: int = 8,
+    max_depth: int = 1,
+    reverse: bool = False,
+    output: str = "structured",
+) -> dict[str, Any]:
+    evaluation, start = await _evaluate_address(session, address)
+    if start is None:
+        return {
+            "ok": False,
+            "session_id": session.session_id,
+            "error": f"Could not resolve address expression: {address}",
+            "evaluation": evaluation,
+        }
+    if reverse:
+        start -= count * pointer_size
+    memory = _result(
+        session,
+        await session.execute(
+            _mi_read_memory_bytes_command(hex(start), count * pointer_size),
+            timeout=10.0,
+        ),
+    )
+    data = _read_memory_contents(memory)
+    entries: list[dict[str, Any]] = []
+    for index in range(count):
+        offset = index * pointer_size
+        chunk = data[offset : offset + pointer_size]
+        if len(chunk) < pointer_size:
+            break
+        value = int.from_bytes(chunk, "little")
+        entry: dict[str, Any] = {
+            "index": index,
+            "address": hex(start + offset),
+            "value": hex(value),
+            "mapping_info": _address_mapping_info(value, mappings),
+            "chain": [],
+        }
+        current = value
+        for depth in range(max_depth):
+            current_info = _address_mapping_info(current, mappings)
+            if current_info is None:
+                break
+            perms = str(current_info["mapping"].get("perms", ""))
+            if "r" not in perms and perms:
+                break
+            deref = _result(
+                session,
+                await session.execute(
+                    _mi_read_memory_bytes_command(hex(current), pointer_size),
+                    timeout=5.0,
+                ),
+            )
+            deref_data = _read_memory_contents(deref)
+            if len(deref_data) < pointer_size:
+                break
+            next_value = int.from_bytes(deref_data[:pointer_size], "little")
+            entry["chain"].append(
+                {
+                    "depth": depth + 1,
+                    "address": hex(current),
+                    "value": hex(next_value),
+                    "mapping_info": _address_mapping_info(next_value, mappings),
+                }
+            )
+            current = next_value
+        entries.append(entry)
+    payload = {
+        "ok": bool(memory.get("ok")),
+        "session_id": session.session_id,
+        "start": hex(start),
+        "address_expression": address,
+        "count": count,
+        "pointer_size": pointer_size,
+        "entries": entries,
+        "evaluation": evaluation,
+        "memory": memory,
+        "vmmap_ok": vmmap_payload.get("ok"),
+    }
+    if output != "raw":
+        payload["memory"] = _command_status(memory)
+    return _profile_large_payload(
+        payload,
+        output,
+        summary_fields={
+            "start": hex(start),
+            "address_expression": address,
+            "entry_count": len(entries),
+            "entries": entries[: min(8, len(entries))],
+        },
+    )
 
 
 async def gdb_telescope(
@@ -390,94 +479,54 @@ async def gdb_telescope(
         if not 0 <= max_depth <= 4:
             raise ValueError("max_depth must be between 0 and 4")
         session = await manager.get(session_id)
-        evaluation, start = await _evaluate_address(session, address)
-        if start is None:
-            return {
-                "ok": False,
-                "session_id": session_id,
-                "error": f"Could not resolve address expression: {address}",
-                "evaluation": evaluation,
-            }
-        if reverse:
-            start -= count * pointer_size
+        _require_read_expression("address", address)
         vmmap_payload, mappings = await _structured_mappings(session)
-        memory = _result(
+        return await _telescope_with_mappings(
             session,
-            await session.execute(
-                _mi_read_memory_bytes_command(hex(start), count * pointer_size),
-                timeout=10.0,
-            ),
-        )
-        data = _read_memory_contents(memory)
-        entries: list[dict[str, Any]] = []
-        for index in range(count):
-            offset = index * pointer_size
-            chunk = data[offset : offset + pointer_size]
-            if len(chunk) < pointer_size:
-                break
-            value = int.from_bytes(chunk, "little")
-            entry: dict[str, Any] = {
-                "index": index,
-                "address": hex(start + offset),
-                "value": hex(value),
-                "mapping_info": _address_mapping_info(value, mappings),
-                "chain": [],
-            }
-            current = value
-            for depth in range(max_depth):
-                current_info = _address_mapping_info(current, mappings)
-                if current_info is None:
-                    break
-                perms = str(current_info["mapping"].get("perms", ""))
-                if "r" not in perms and perms:
-                    break
-                deref = _result(
-                    session,
-                    await session.execute(
-                        _mi_read_memory_bytes_command(hex(current), pointer_size),
-                        timeout=5.0,
-                    ),
-                )
-                deref_data = _read_memory_contents(deref)
-                if len(deref_data) < pointer_size:
-                    break
-                next_value = int.from_bytes(deref_data[:pointer_size], "little")
-                entry["chain"].append(
-                    {
-                        "depth": depth + 1,
-                        "address": hex(current),
-                        "value": hex(next_value),
-                        "mapping_info": _address_mapping_info(next_value, mappings),
-                    }
-                )
-                current = next_value
-            entries.append(entry)
-        payload = {
-            "ok": bool(memory.get("ok")),
-            "session_id": session_id,
-            "start": hex(start),
-            "address_expression": address,
-            "count": count,
-            "pointer_size": pointer_size,
-            "entries": entries,
-            "evaluation": evaluation,
-            "memory": memory,
-            "vmmap_ok": vmmap_payload.get("ok"),
-        }
-        if output != "raw":
-            payload["memory"] = _command_status(memory)
-        return _profile_large_payload(
-            payload,
-            output,
-            summary_fields={
-                "start": hex(start),
-                "address_expression": address,
-                "entry_count": len(entries),
-                "entries": entries[: min(8, len(entries))],
-            },
+            address,
+            vmmap_payload,
+            mappings,
+            count=count,
+            pointer_size=pointer_size,
+            max_depth=max_depth,
+            reverse=reverse,
+            output=output,
         )
     except Exception as exc:
         return _error(exc)
+
+
+async def _nearpc_with_mappings(
+    session: GdbSession,
+    pc: str,
+    vmmap_payload: dict[str, Any],
+    mappings: list[dict[str, Any]],
+    *,
+    lines: int = 12,
+    reverse: int = 4,
+    instruction_bytes: int = 8,
+) -> dict[str, Any]:
+    evaluation, address = await _evaluate_address(session, pc)
+    start_expression = pc
+    if address is not None and reverse:
+        start_expression = hex(max(0, address - reverse * instruction_bytes))
+    command = _cli_x_instructions_command(lines, start_expression)
+    disassembly = _result(session, await session.execute(command, timeout=10.0))
+    instructions = _parse_disassembly(str(disassembly.get("console") or ""), address)
+    for instruction in instructions:
+        target = _parse_int(instruction.get("target"))
+        addr = _parse_int(instruction.get("address"))
+        instruction["address_info"] = _address_mapping_info(addr, mappings)
+        instruction["target_info"] = _address_mapping_info(target, mappings)
+    return {
+        **disassembly,
+        "pc": _hex_or_none(address),
+        "pc_expression": pc,
+        "start_expression": start_expression,
+        "instructions": instructions,
+        "evaluation": evaluation,
+        "vmmap_ok": vmmap_payload.get("ok"),
+    }
 
 
 async def gdb_nearpc(
@@ -497,30 +546,58 @@ async def gdb_nearpc(
         if not 1 <= instruction_bytes <= 16:
             raise ValueError("instruction_bytes must be between 1 and 16")
         session = await manager.get(session_id)
-        evaluation, address = await _evaluate_address(session, pc)
-        start_expression = pc
-        if address is not None and reverse:
-            start_expression = hex(max(0, address - reverse * instruction_bytes))
-        command = _cli_x_instructions_command(lines, start_expression)
-        disassembly = _result(session, await session.execute(command, timeout=10.0))
-        instructions = _parse_disassembly(str(disassembly.get("console") or ""), address)
+        _require_read_expression("pc", pc)
         vmmap_payload, mappings = await _structured_mappings(session)
-        for instruction in instructions:
-            target = _parse_int(instruction.get("target"))
-            addr = _parse_int(instruction.get("address"))
-            instruction["address_info"] = _address_mapping_info(addr, mappings)
-            instruction["target_info"] = _address_mapping_info(target, mappings)
-        return {
-            **disassembly,
-            "pc": _hex_or_none(address),
-            "pc_expression": pc,
-            "start_expression": start_expression,
-            "instructions": instructions,
-            "evaluation": evaluation,
-            "vmmap_ok": vmmap_payload.get("ok"),
-        }
+        return await _nearpc_with_mappings(
+            session,
+            pc,
+            vmmap_payload,
+            mappings,
+            lines=lines,
+            reverse=reverse,
+            instruction_bytes=instruction_bytes,
+        )
     except Exception as exc:
         return _error(exc)
+
+
+def _piebase_from_mappings(
+    session: GdbSession,
+    payload: dict[str, Any],
+    mappings: list[dict[str, Any]],
+    *,
+    offset: int = 0,
+    module: str | None = None,
+) -> dict[str, Any]:
+    candidates = mappings
+    if module:
+        lowered = module.lower()
+        candidates = [
+            item
+            for item in candidates
+            if lowered in str(item.get("objfile", "")).lower()
+            or lowered in str(item.get("name", "")).lower()
+        ]
+    elif session.program:
+        program = os.path.basename(session.program)
+        candidates = [
+            item
+            for item in candidates
+            if os.path.basename(str(item.get("objfile") or "")) == program
+        ] or candidates
+    candidates = sorted(candidates, key=lambda item: _parse_int(item.get("start")) or 0)
+    base = _parse_int(candidates[0].get("start")) if candidates else None
+    return {
+        "ok": bool(payload.get("ok")) and base is not None,
+        "session_id": session.session_id,
+        "module": module,
+        "base": _hex_or_none(base),
+        "offset": hex(offset),
+        "address": _hex_or_none(base + offset if base is not None else None),
+        "mapping": candidates[0] if candidates else None,
+        "mappings_considered": len(candidates),
+        "vmmap": payload,
+    }
 
 
 async def gdb_piebase(
@@ -537,35 +614,13 @@ async def gdb_piebase(
             _require_single_line("module", module)
         session = await manager.get(session_id)
         payload, mappings = await _structured_mappings(session)
-        candidates = mappings
-        if module:
-            lowered = module.lower()
-            candidates = [
-                item
-                for item in candidates
-                if lowered in str(item.get("objfile", "")).lower()
-                or lowered in str(item.get("name", "")).lower()
-            ]
-        elif session.program:
-            program = os.path.basename(session.program)
-            candidates = [
-                item
-                for item in candidates
-                if os.path.basename(str(item.get("objfile") or "")) == program
-            ] or candidates
-        candidates = sorted(candidates, key=lambda item: _parse_int(item.get("start")) or 0)
-        base = _parse_int(candidates[0].get("start")) if candidates else None
-        return {
-            "ok": bool(payload.get("ok")) and base is not None,
-            "session_id": session_id,
-            "module": module,
-            "base": _hex_or_none(base),
-            "offset": hex(offset),
-            "address": _hex_or_none(base + offset if base is not None else None),
-            "mapping": candidates[0] if candidates else None,
-            "mappings_considered": len(candidates),
-            "vmmap": payload,
-        }
+        return _piebase_from_mappings(
+            session,
+            payload,
+            mappings,
+            offset=offset,
+            module=module,
+        )
     except Exception as exc:
         return _error(exc)
 
@@ -616,28 +671,47 @@ async def gdb_pwn_context(
             raise ValueError("telescope_count must be between 1 and 64")
         if not 1 <= nearpc_lines <= 100:
             raise ValueError("nearpc_lines must be between 1 and 100")
-        await manager.get(session_id)
+        session = await manager.get(session_id)
         (
             location,
             backtrace,
             registers,
             pc,
             sp,
-            vmmap,
+            (vmmap_raw, mappings),
         ) = await asyncio.gather(
             gdb_current_location(session_id),
             gdb_backtrace(session_id, max_frames=max_frames),
             gdb_registers(session_id),
             gdb_read_register(session_id, "pc"),
             gdb_read_register(session_id, "sp"),
-            gdb_vmmap_structured(session_id),
+            _structured_mappings(session),
         )
-        nearpc = await gdb_nearpc(session_id, lines=nearpc_lines)
-        telescope = await gdb_telescope(session_id, count=telescope_count)
+        vmmap = _build_vmmap_payload(session_id, vmmap_raw, mappings)
+        nearpc = await _nearpc_with_mappings(
+            session,
+            "$pc",
+            vmmap_raw,
+            mappings,
+            lines=nearpc_lines,
+        )
+        telescope = await _telescope_with_mappings(
+            session,
+            "$sp",
+            vmmap_raw,
+            mappings,
+            count=telescope_count,
+        )
         pc_info = None
         pc_value = pc.get("value")
         if isinstance(pc_value, str):
-            pc_info = await gdb_address_info(session_id, pc_value, read_string=False)
+            pc_info = await _address_info_with_mappings(
+                session,
+                pc_value,
+                vmmap_raw,
+                mappings,
+                read_string=False,
+            )
         payload = {
             "ok": any(
                 bool(item.get("ok"))
@@ -684,93 +758,103 @@ async def gdb_pwn_context(
         return _error(exc)
 
 
-async def _run_readelf(
+def _checksec_from_parts(
+    *,
+    session_id: str | None,
     file_path: str,
-    args: list[str],
-    timeout: float,
-    output: str = "raw",
-    cursor: str | None = None,
-    page_size: int | None = None,
+    header: dict[str, Any],
+    program_headers: dict[str, Any],
+    dynamic: dict[str, Any],
+    symbols: dict[str, Any],
+    notes: dict[str, Any],
+    output: str,
 ) -> dict[str, Any]:
-    _require_output_profile(output)
-    readelf = shutil.which("readelf")
-    if readelf is None:
-        return {"ok": False, "error": "readelf is not available on PATH"}
-    process = await asyncio.create_subprocess_exec(
-        readelf,
-        "-W",
-        *args,
-        "--",
-        file_path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+    ok = bool(header.get("ok") and program_headers.get("ok"))
+    security = _parse_checksec(
+        str(header.get("stdout") or ""),
+        str(program_headers.get("stdout") or ""),
+        str(dynamic.get("stdout") or ""),
+        str(symbols.get("stdout") or ""),
     )
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        process.kill()
-        await process.wait()
-        return {"ok": False, "error": f"readelf timed out after {timeout} seconds"}
-    stdout_text = stdout.decode(errors="replace")
-    stdout_lines, stdout_pagination = paginate_text_lines(
-        stdout_text,
-        cursor=cursor,
-        page_size=page_size,
-        default_page_size=max(1, min(len(stdout_text.splitlines()) or 1, 10_000)),
-        max_page_size=10_000,
-        cursor_scope=f"readelf:{file_path}:{args}",
-    )
-    if cursor is not None or page_size is not None:
-        stdout_text = "\n".join(stdout_lines)
-
-    output_limit = max(1_000, runtime_config.output_limit_chars // 8)
-    decoded_stdout, stdout_truncated = _truncate_text(
-        stdout_text,
-        output_limit,
-    )
-    decoded_stderr, stderr_truncated = _truncate_text(
-        stderr.decode(errors="replace"),
-        output_limit,
-    )
+    notes_stdout = str(notes.get("stdout") or "")
+    build_id_match = _BUILD_ID_RE.search(notes_stdout)
+    security["build_id"] = build_id_match.group("build_id") if build_id_match else ""
+    security["ibt"] = "IBT" in notes_stdout
+    security["shstk"] = "SHSTK" in notes_stdout
+    commands = {
+        "header": header,
+        "program_headers": program_headers,
+        "dynamic": dynamic,
+        "symbols": symbols,
+        "notes": notes,
+    }
+    command_status = {name: _command_status(result) for name, result in commands.items()}
     payload = {
-        "ok": process.returncode == 0,
-        "command": ["readelf", "-W", *args, "--", file_path],
+        "ok": ok,
+        "session_id": session_id,
         "file_path": file_path,
-        "returncode": process.returncode,
-        "stdout": decoded_stdout,
-        "stderr": decoded_stderr,
-        "stdout_truncated": stdout_truncated,
-        "stderr_truncated": stderr_truncated,
-        "truncated": stdout_truncated or stderr_truncated,
-        "output_limit_chars": output_limit,
-        "stdout_pagination": stdout_pagination,
+        "security": security,
+        "commands": commands if output == "raw" else command_status,
     }
     return _profile_large_payload(
         payload,
         output,
-        summary_fields={
-            "command": payload["command"],
-            "stdout_truncated": stdout_truncated,
-            "stderr_truncated": stderr_truncated,
-            "stdout_pagination": stdout_pagination,
-        },
+        summary_fields={"security": security, "commands": command_status},
     )
 
 
-async def _resolve_elf_file(
+def _elf_info_from_bundle(
     *,
     session_id: str | None,
-    file_path: str | None,
-) -> tuple[str, GdbSession | None]:
-    if file_path is not None:
-        _require_cli_target("file_path", file_path)
-        return file_path, None
-    if session_id is None:
-        raise ValueError("Provide session_id or file_path")
-    session = await manager.get(session_id)
-    if not session.program:
-        raise ValueError("Session has no loaded program; provide file_path")
-    return session.program, session
+    file_path: str,
+    bundle: dict[str, dict[str, Any]],
+    profile: str,
+) -> dict[str, Any]:
+    header = bundle["header"]
+    sections = bundle["sections"]
+    program_headers = bundle["program_headers"]
+    dynamic = bundle["dynamic"]
+    notes = bundle["notes"]
+    symbols = bundle["symbols"]
+    header_stdout = str(header.get("stdout") or "")
+    sections_stdout = str(sections.get("stdout") or "")
+    notes_stdout = str(notes.get("stdout") or "")
+    build_id_match = _BUILD_ID_RE.search(notes_stdout)
+    parsed_sections = _parse_sections(sections_stdout)
+    payload: dict[str, Any] = {
+        "ok": bool(header.get("ok")),
+        "session_id": session_id,
+        "file_path": file_path,
+        "header": _parse_elf_header(header_stdout),
+        "sections": parsed_sections,
+        "section_count": len(parsed_sections),
+        "security": _parse_checksec(
+            header_stdout,
+            str(program_headers.get("stdout") or ""),
+            str(dynamic.get("stdout") or ""),
+            str(symbols.get("stdout") or ""),
+        ),
+        "build_id": build_id_match.group("build_id") if build_id_match else "",
+    }
+    if profile == "raw":
+        payload["raw"] = {
+            "header": header,
+            "sections": sections,
+            "program_headers": program_headers,
+            "dynamic": dynamic,
+            "notes": notes,
+            "symbols": symbols,
+        }
+    return _profile_large_payload(
+        payload,
+        profile,
+        summary_fields={
+            "header": payload["header"],
+            "section_count": payload["section_count"],
+            "security": payload["security"],
+            "build_id": payload["build_id"],
+        },
+    )
 
 
 async def gdb_checksec(
@@ -791,37 +875,15 @@ async def gdb_checksec(
             _run_readelf(path, ["-s"], timeout),
             _run_readelf(path, ["-n"], timeout),
         )
-        ok = bool(header.get("ok") and program_headers.get("ok"))
-        security = _parse_checksec(
-            str(header.get("stdout") or ""),
-            str(program_headers.get("stdout") or ""),
-            str(dynamic.get("stdout") or ""),
-            str(symbols.get("stdout") or ""),
-        )
-        notes_stdout = str(notes.get("stdout") or "")
-        build_id_match = _BUILD_ID_RE.search(notes_stdout)
-        security["build_id"] = build_id_match.group("build_id") if build_id_match else ""
-        security["ibt"] = "IBT" in notes_stdout
-        security["shstk"] = "SHSTK" in notes_stdout
-        commands = {
-            "header": header,
-            "program_headers": program_headers,
-            "dynamic": dynamic,
-            "symbols": symbols,
-            "notes": notes,
-        }
-        command_status = {name: _command_status(result) for name, result in commands.items()}
-        payload = {
-            "ok": ok,
-            "session_id": session.session_id if session else session_id,
-            "file_path": path,
-            "security": security,
-            "commands": commands if output == "raw" else command_status,
-        }
-        return _profile_large_payload(
-            payload,
-            output,
-            summary_fields={"security": security, "commands": command_status},
+        return _checksec_from_parts(
+            session_id=session.session_id if session else session_id,
+            file_path=path,
+            header=header,
+            program_headers=program_headers,
+            dynamic=dynamic,
+            symbols=symbols,
+            notes=notes,
+            output=output,
         )
     except Exception as exc:
         return _error(exc)
@@ -839,52 +901,12 @@ async def gdb_elf_info(
     try:
         profile = "raw" if include_raw else _require_output_profile(output)
         path, session = await _resolve_elf_file(session_id=session_id, file_path=file_path)
-        header, sections, program_headers, dynamic, notes = await asyncio.gather(
-            _run_readelf(path, ["-h"], timeout),
-            _run_readelf(path, ["-S"], timeout),
-            _run_readelf(path, ["-l"], timeout),
-            _run_readelf(path, ["-d"], timeout),
-            _run_readelf(path, ["-n"], timeout),
-        )
-        symbols = await _run_readelf(path, ["-s"], timeout)
-        header_stdout = str(header.get("stdout") or "")
-        sections_stdout = str(sections.get("stdout") or "")
-        notes_stdout = str(notes.get("stdout") or "")
-        build_id_match = _BUILD_ID_RE.search(notes_stdout)
-        parsed_sections = _parse_sections(sections_stdout)
-        payload: dict[str, Any] = {
-            "ok": bool(header.get("ok")),
-            "session_id": session.session_id if session else session_id,
-            "file_path": path,
-            "header": _parse_elf_header(header_stdout),
-            "sections": parsed_sections,
-            "section_count": len(parsed_sections),
-            "security": _parse_checksec(
-                header_stdout,
-                str(program_headers.get("stdout") or ""),
-                str(dynamic.get("stdout") or ""),
-                str(symbols.get("stdout") or ""),
-            ),
-            "build_id": build_id_match.group("build_id") if build_id_match else "",
-        }
-        if profile == "raw":
-            payload["raw"] = {
-                "header": header,
-                "sections": sections,
-                "program_headers": program_headers,
-                "dynamic": dynamic,
-                "notes": notes,
-                "symbols": symbols,
-            }
-        return _profile_large_payload(
-            payload,
-            profile,
-            summary_fields={
-                "header": payload["header"],
-                "section_count": payload["section_count"],
-                "security": payload["security"],
-                "build_id": payload["build_id"],
-            },
+        bundle = await collect_elf_bundle(path, timeout)
+        return _elf_info_from_bundle(
+            session_id=session.session_id if session else session_id,
+            file_path=path,
+            bundle=bundle,
+            profile=profile,
         )
     except Exception as exc:
         return _error(exc)
@@ -1119,27 +1141,33 @@ async def gdb_binary_summary(
         path, session = await _resolve_elf_file(session_id=session_id, file_path=file_path)
         if session is None and session_id is not None:
             session = await manager.get(session_id)
-        checksec, elf_info = await asyncio.gather(
-            gdb_checksec(
-                session_id=session.session_id if session else None,
-                file_path=path,
-                timeout=timeout,
-                output="raw" if output == "raw" else "structured",
-            ),
-            gdb_elf_info(
-                session_id=session.session_id if session else None,
-                file_path=path,
-                timeout=timeout,
-                output="raw" if output == "raw" else "structured",
-            ),
+        bundle = await collect_elf_bundle(path, timeout)
+        resolved_session_id = session.session_id if session else session_id
+        checksec_profile = "raw" if output == "raw" else "structured"
+        checksec = _checksec_from_parts(
+            session_id=resolved_session_id,
+            file_path=path,
+            header=bundle["header"],
+            program_headers=bundle["program_headers"],
+            dynamic=bundle["dynamic"],
+            symbols=bundle["symbols"],
+            notes=bundle["notes"],
+            output=checksec_profile,
+        )
+        elf_info = _elf_info_from_bundle(
+            session_id=resolved_session_id,
+            file_path=path,
+            bundle=bundle,
+            profile=checksec_profile,
         )
         vmmap: dict[str, Any] | None = None
         piebase: dict[str, Any] | None = None
         entry_info: dict[str, Any] | None = None
         mapping_summary: dict[str, int] = {}
         if session is not None:
-            vmmap = await gdb_vmmap_structured(session.session_id)
-            piebase = await gdb_piebase(session.session_id)
+            vmmap_raw, mappings = await _structured_mappings(session)
+            vmmap = _build_vmmap_payload(session.session_id, vmmap_raw, mappings)
+            piebase = _piebase_from_mappings(session, vmmap_raw, mappings)
             for mapping in vmmap.get("mappings", []) if isinstance(vmmap, dict) else []:
                 if not isinstance(mapping, dict):
                     continue
@@ -1150,14 +1178,16 @@ async def gdb_binary_summary(
             is_pie = bool(checksec.get("security", {}).get("pie"))
             if entry is not None:
                 runtime_entry = base + entry if is_pie and base is not None else entry
-                entry_info = await gdb_address_info(
-                    session.session_id,
+                entry_info = await _address_info_with_mappings(
+                    session,
                     hex(runtime_entry),
+                    vmmap_raw,
+                    mappings,
                     read_string=False,
                 )
         payload = {
             "ok": bool(checksec.get("ok") or elf_info.get("ok")),
-            "session_id": session.session_id if session else session_id,
+            "session_id": resolved_session_id,
             "file_path": path,
             "summary": {
                 "arch": checksec.get("security", {}).get("arch"),

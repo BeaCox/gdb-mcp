@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 
 async def report_progress(

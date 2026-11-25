@@ -7,9 +7,9 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.prompts import Prompt
-from mcp.server.fastmcp.prompts.base import PromptArgument
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.prompts import Prompt
+from mcp.server.mcpserver.prompts.base import PromptArgument
 
 
 @dataclass(frozen=True)
@@ -320,7 +320,7 @@ def _make_renderer(name: str):
     return render
 
 
-def register_prompts(mcp: FastMCP[Any]) -> None:
+def register_prompts(mcp: MCPServer[Any]) -> None:
     """Register the static workflow prompts on the backend server."""
 
     for spec in PROMPT_SPECS:

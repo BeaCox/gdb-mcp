@@ -9,8 +9,6 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
-from mcp.shared.exceptions import McpError
-from mcp.types import CancelledNotification, CancelledNotificationParams
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -27,8 +25,8 @@ def _source_env(**extra: str) -> dict[str, str]:
 
 
 def _payload(result) -> dict:
-    if result.structuredContent is not None:
-        return result.structuredContent
+    if result.structured_content is not None:
+        return result.structured_content
     text = "\n".join(
         content.text
         for content in result.content
@@ -136,7 +134,6 @@ class McpInteroperabilityTests(unittest.TestCase):
                         if progress >= 50:
                             dispatched.set()
 
-                    request_id = session._request_id
                     running = asyncio.create_task(
                         session.call_tool(
                             "gdb_run",
@@ -146,15 +143,8 @@ class McpInteroperabilityTests(unittest.TestCase):
                     )
                     await asyncio.wait_for(dispatched.wait(), timeout=2.0)
                     await asyncio.sleep(0.1)
-                    await session.send_notification(
-                        CancelledNotification(
-                            params=CancelledNotificationParams(
-                                requestId=request_id,
-                                reason="interoperability cancellation test",
-                            )
-                        )
-                    )
-                    with self.assertRaises(McpError):
+                    running.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
                         await running
                     self.assertEqual([event[0] for event in progress_events], [0, 50])
 
@@ -198,7 +188,7 @@ class McpInteroperabilityTests(unittest.TestCase):
         try:
             await _wait_for_port(port, process)
             async with streamable_http_client(f"http://127.0.0.1:{port}/mcp") as streams:
-                read, write, _ = streams
+                read, write = streams
                 async with ClientSession(read, write) as session:
                     initialized = await session.initialize()
                     tools = await session.list_tools()

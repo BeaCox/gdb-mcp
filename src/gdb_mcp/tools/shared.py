@@ -8,7 +8,12 @@ from typing import Any
 from ..config import ServerConfig
 from ..mi import c_escape
 from ..responses import command_response, error_response
-from ..session import CommandResult, GdbMcpError, GdbSession, SessionManager
+from ..session import (
+    CommandResult,
+    GdbSession,
+    PolicyDeniedError,
+    SessionManager,
+)
 
 _manager: SessionManager | None = None
 _runtime_config: ServerConfig | None = None
@@ -451,14 +456,14 @@ def _execution_only_payload(
 def _require_single_line(name: str, value: str) -> None:
     if "\n" in value or "\r" in value:
         raise ValueError(f"{name} must not contain line breaks")
+    if "\0" in value:
+        raise ValueError(f"{name} contains unsupported characters")
 
 
 def _require_cli_target(name: str, value: str) -> None:
     _require_single_line(name, value)
     if not value.strip():
         raise ValueError(f"{name} must not be empty")
-    if any(char in value for char in "\0"):
-        raise ValueError(f"{name} contains unsupported characters")
 
 
 def _require_mi_word(name: str, value: str) -> None:
@@ -469,7 +474,7 @@ def _require_mi_word(name: str, value: str) -> None:
 
 def _require_unsafe_tool(name: str) -> None:
     if not runtime_config.allow_unsafe_execute:
-        raise GdbMcpError(
+        raise PolicyDeniedError(
             f"{name} requires --unsafe or GDB_MCP_ALLOW_UNSAFE=1 because it can "
             "modify the inferior or run arbitrary target code."
         )
@@ -505,7 +510,7 @@ def _require_hex_bytes(name: str, value: str) -> str:
     return compact.lower()
 
 
-_EXPRESSION_ASSIGNMENT_RE = re.compile(r"(?<![<>=!])=(?!=)")
+_EXPRESSION_ASSIGNMENT_RE = re.compile(r"(?:<<|>>)=|(?<![<>=!])=(?!=)")
 _EXPRESSION_CALL_RE = re.compile(r"(?:[A-Za-z_$][\w$:]*|\]|\))\s*\(")
 _REGISTER_NAME_RE = re.compile(r"^\$?[A-Za-z_][A-Za-z0-9_]*$")
 

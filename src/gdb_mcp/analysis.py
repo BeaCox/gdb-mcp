@@ -245,13 +245,25 @@ def parse_checksec(
         "",
     )
     has_gnu_relro = "GNU_RELRO" in program_headers
-    bind_now = "BIND_NOW" in dynamic or "(FLAGS)" in dynamic and "NOW" in dynamic
+    bind_now = bool(
+        re.search(r"\bBIND_NOW\b", dynamic)
+        or (
+            ("(FLAGS)" in dynamic or "(FLAGS_1)" in dynamic)
+            and re.search(r"\bNOW\b", dynamic)
+        )
+    )
     canary = "__stack_chk_fail" in symbols
     stack_exec = False
     if gnu_stack_line:
         parts = gnu_stack_line.split()
-        flags = parts[-1] if parts else ""
-        stack_exec = "E" in flags
+        # Real readelf -W -l lines end with "<Flg> <Align>", e.g. "RW 0x10" or "RWE 0x10".
+        # Synthetic fixtures may omit alignment and end directly with "<Flg>".
+        flag_token = ""
+        if len(parts) >= 2 and (parts[-1].startswith("0x") or parts[-1].isdigit()):
+            flag_token = parts[-2]
+        elif parts:
+            flag_token = parts[-1]
+        stack_exec = "E" in flag_token
     if has_gnu_relro and bind_now:
         relro = "Full RELRO"
     elif has_gnu_relro:

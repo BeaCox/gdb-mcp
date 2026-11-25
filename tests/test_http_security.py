@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from starlette.testclient import TestClient
 
 from gdb_mcp.http_security import configure_http_security, is_loopback_host
@@ -11,14 +11,59 @@ class HttpSecurityTests(unittest.TestCase):
     def test_loopback_detection_is_conservative(self) -> None:
         self.assertTrue(is_loopback_host("127.0.0.1"))
         self.assertTrue(is_loopback_host("::1"))
+        self.assertTrue(is_loopback_host("[::1]"))
         self.assertTrue(is_loopback_host("localhost"))
         self.assertFalse(is_loopback_host("0.0.0.0"))
         self.assertFalse(is_loopback_host("debug.example.com"))
 
+    def test_rejects_wildcard_allowlists_and_malformed_auth_inputs(self) -> None:
+        with self.assertRaisesRegex(ValueError, "wildcard-all"):
+            configure_http_security(
+                MCPServer("test"),
+                transport="streamable-http",
+                host="0.0.0.0",
+                allow_remote=True,
+                allow_unsafe_over_http=False,
+                unsafe_enabled=False,
+                bearer_token="secret",
+                issuer_url="https://issuer.example.com",
+                resource_url="https://debug.example.com/mcp",
+                allowed_hosts=["*"],
+                allowed_origins=[],
+            )
+        with self.assertRaisesRegex(ValueError, "http:// or https://"):
+            configure_http_security(
+                MCPServer("test"),
+                transport="streamable-http",
+                host="0.0.0.0",
+                allow_remote=True,
+                allow_unsafe_over_http=False,
+                unsafe_enabled=False,
+                bearer_token="secret",
+                issuer_url="ftp://issuer.example.com",
+                resource_url="https://debug.example.com/mcp",
+                allowed_hosts=["debug.example.com"],
+                allowed_origins=[],
+            )
+        with self.assertRaisesRegex(ValueError, "single-line secret"):
+            configure_http_security(
+                MCPServer("test"),
+                transport="streamable-http",
+                host="0.0.0.0",
+                allow_remote=True,
+                allow_unsafe_over_http=False,
+                unsafe_enabled=False,
+                bearer_token="bad\ntoken",
+                issuer_url="https://issuer.example.com",
+                resource_url="https://debug.example.com/mcp",
+                allowed_hosts=["debug.example.com"],
+                allowed_origins=[],
+            )
+
     def test_non_loopback_bind_requires_explicit_protection(self) -> None:
         with self.assertRaisesRegex(ValueError, "refusing non-loopback"):
             configure_http_security(
-                FastMCP("test"),
+                MCPServer("test"),
                 transport="streamable-http",
                 host="0.0.0.0",
                 allow_remote=False,
@@ -42,7 +87,7 @@ class HttpSecurityTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "requires bearer authentication"):
             configure_http_security(
-                FastMCP("test"),
+                MCPServer("test"),
                 **common,
                 bearer_token=None,
                 issuer_url=None,
@@ -51,7 +96,7 @@ class HttpSecurityTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "requires at least one --http-allowed-host"):
             configure_http_security(
-                FastMCP("test"),
+                MCPServer("test"),
                 **common,
                 bearer_token="secret",
                 issuer_url="https://issuer.example.com",
@@ -62,7 +107,7 @@ class HttpSecurityTests(unittest.TestCase):
     def test_non_loopback_unsafe_tools_need_separate_acknowledgement(self) -> None:
         with self.assertRaisesRegex(ValueError, "allow-unsafe-over-http"):
             configure_http_security(
-                FastMCP("test"),
+                MCPServer("test"),
                 transport="streamable-http",
                 host="0.0.0.0",
                 allow_remote=True,
@@ -76,8 +121,8 @@ class HttpSecurityTests(unittest.TestCase):
             )
 
     def test_bearer_authentication_rejects_missing_token_and_accepts_valid_token(self) -> None:
-        server = FastMCP("http-security-test")
-        configure_http_security(
+        server = MCPServer("http-security-test")
+        transport_security = configure_http_security(
             server,
             transport="streamable-http",
             host="0.0.0.0",
@@ -109,7 +154,11 @@ class HttpSecurityTests(unittest.TestCase):
             "content-type": "application/json",
             "host": "debug.example.com:443",
         }
-        with TestClient(server.streamable_http_app()) as client:
+        app = server.streamable_http_app(
+            transport_security=transport_security,
+            host="0.0.0.0",
+        )
+        with TestClient(app) as client:
             rejected = client.post("/mcp", headers=headers, json=initialize)
             accepted = client.post(
                 "/mcp",

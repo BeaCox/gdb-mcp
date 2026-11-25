@@ -18,12 +18,14 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+import anyio
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, Tool
 
 from . import __version__
+from .observability import logger, parse_log_level
 from .prompts import prompt_index, render_prompt
 from .resources import RESOURCE_MIME_TYPE, read_reference_resource, resource_index
 from .tool_profiles import filter_tools, parse_tool_profile
@@ -104,6 +106,8 @@ class LazyBackend:
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _stack: AsyncExitStack | None = None
     _session: ClientSession | None = None
+    _owner_task: asyncio.Task[None] | None = None
+    _stop_event: asyncio.Event | None = None
 
     @classmethod
     def from_env(cls) -> LazyBackend:
@@ -144,18 +148,86 @@ class LazyBackend:
         ) = None,
     ) -> CallToolResult:
         session = await self._ensure_session()
-        return await session.call_tool(
-            name,
-            arguments or {},
-            progress_callback=progress_callback,
-        )
+        try:
+            return await session.call_tool(
+                name,
+                arguments or {},
+                progress_callback=progress_callback,
+            )
+        except (
+            BrokenPipeError,
+            ConnectionResetError,
+            EOFError,
+            OSError,
+            anyio.ClosedResourceError,
+            anyio.BrokenResourceError,
+        ) as exc:
+            logger.emit(
+                "warning",
+                "proxy.backend_disconnected",
+                tool=name,
+                error_type=type(exc).__name__,
+            )
+            await self.close()
+            raise
 
     async def close(self) -> None:
         async with self._lock:
-            if self._stack is not None:
-                await self._stack.aclose()
+            owner_task = self._owner_task
+            stop_event = self._stop_event
+            self._owner_task = None
+            self._stop_event = None
             self._stack = None
             self._session = None
+        if stop_event is not None:
+            stop_event.set()
+        if owner_task is not None:
+            await owner_task
+
+    async def _run_backend_owner(
+        self,
+        ready: asyncio.Future[ClientSession],
+        stop_event: asyncio.Event,
+    ) -> None:
+        stack = AsyncExitStack()
+        self._stack = stack
+        try:
+            if self.url:
+                import httpx2
+
+                http_client = await stack.enter_async_context(
+                    httpx2.AsyncClient(timeout=self.startup_timeout)
+                )
+                read, write = await stack.enter_async_context(
+                    streamable_http_client(self.url, http_client=http_client)
+                )
+            else:
+                if not self.command:
+                    raise ValueError("backend command is required when no backend URL is set")
+                params = StdioServerParameters(
+                    command=self.command,
+                    args=self.args or [],
+                    env=self.env,
+                    cwd=self.cwd,
+                )
+                read, write = await stack.enter_async_context(stdio_client(params))
+
+            session = await stack.enter_async_context(ClientSession(read, write))
+            await asyncio.wait_for(
+                session.initialize(),
+                timeout=self.startup_timeout,
+            )
+            if not ready.done():
+                ready.set_result(session)
+            await stop_event.wait()
+        except BaseException as exc:
+            if not ready.done():
+                ready.set_exception(exc)
+            raise
+        finally:
+            self._session = None
+            self._stack = None
+            await stack.aclose()
 
     async def _ensure_session(self) -> ClientSession:
         if self._session is not None:
@@ -165,33 +237,22 @@ class LazyBackend:
             if self._session is not None:
                 return self._session
 
-            stack = AsyncExitStack()
+            loop = asyncio.get_running_loop()
+            ready: asyncio.Future[ClientSession] = loop.create_future()
+            stop_event = asyncio.Event()
+            owner_task = asyncio.create_task(self._run_backend_owner(ready, stop_event))
             try:
-                if self.url:
-                    read, write, _ = await stack.enter_async_context(
-                        streamable_http_client(self.url, timeout=self.startup_timeout)
-                    )
-                else:
-                    if not self.command:
-                        raise ValueError("backend command is required when no backend URL is set")
-                    params = StdioServerParameters(
-                        command=self.command,
-                        args=self.args or [],
-                        env=self.env,
-                        cwd=self.cwd,
-                    )
-                    read, write = await stack.enter_async_context(stdio_client(params))
-
-                session = await stack.enter_async_context(ClientSession(read, write))
-                await asyncio.wait_for(
-                    session.initialize(),
-                    timeout=self.startup_timeout,
-                )
+                session = await ready
             except BaseException:
-                await stack.aclose()
+                stop_event.set()
+                try:
+                    await owner_task
+                except BaseException:
+                    pass
                 raise
 
-            self._stack = stack
+            self._stop_event = stop_event
+            self._owner_task = owner_task
             self._session = session
             return session
 
@@ -234,17 +295,69 @@ async def _run_raw_stdio_proxy(backend: LazyBackend) -> None:
             {"jsonrpc": "2.0", "method": "notifications/progress", "params": params}
         )
 
-    while True:
-        line = await asyncio.to_thread(sys.stdin.buffer.readline)
-        if not line:
-            return
-        line = line.strip()
-        if not line:
-            continue
-        response = await _dispatch_jsonrpc(backend, line, emit_progress=emit_progress)
-        if response is None:
-            continue
-        await write_message(response)
+    in_flight: dict[Any, asyncio.Task[None]] = {}
+    anonymous_tasks: set[asyncio.Task[None]] = set()
+
+    async def handle_request(raw_line: bytes, req_id: str | int | None) -> None:
+        try:
+            response = await _dispatch_jsonrpc(
+                backend,
+                raw_line,
+                emit_progress=emit_progress,
+            )
+            if response is not None:
+                await write_message(response)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            current = asyncio.current_task()
+            if req_id is not None and in_flight.get(req_id) is current:
+                in_flight.pop(req_id, None)
+            if current is not None:
+                anonymous_tasks.discard(current)
+
+    try:
+        while True:
+            line = await asyncio.to_thread(sys.stdin.buffer.readline)
+            if not line:
+                return
+            line = line.strip()
+            if not line:
+                continue
+
+            req_id: str | int | None = None
+            try:
+                parsed = json.loads(line)
+            except Exception:
+                parsed = None
+
+            if isinstance(parsed, dict):
+                if parsed.get("method") == "notifications/cancelled":
+                    params = parsed.get("params")
+                    if isinstance(params, dict):
+                        target_id = params.get("requestId")
+                        if (
+                            isinstance(target_id, (str, int))
+                            and (target_task := in_flight.get(target_id)) is not None
+                        ):
+                            target_task.cancel()
+                    continue
+                candidate_id = parsed.get("id")
+                if isinstance(candidate_id, (str, int)):
+                    req_id = candidate_id
+
+            task = asyncio.create_task(handle_request(line, req_id))
+            if req_id is not None:
+                in_flight[req_id] = task
+            else:
+                anonymous_tasks.add(task)
+    finally:
+        pending = list(in_flight.values()) + list(anonymous_tasks)
+        for task in pending:
+            if not task.done():
+                task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
 
 async def _dispatch_jsonrpc(
@@ -377,6 +490,10 @@ def _backend_subprocess_env() -> dict[str, str] | None:
             "GDB_MCP_MAX_SESSIONS",
             "GDB_MCP_OUTPUT_LIMIT_CHARS",
             "GDB_MCP_TOOL_PROFILE",
+            "GDB_MCP_IDLE_SESSION_TTL_SECONDS",
+            "GDB_MCP_MAX_RECENT_RECORDS",
+            "GDB_MCP_MAX_RECENT_COMMANDS",
+            "GDB_MCP_LOG_LEVEL",
             "PYTHONPATH",
         )
         if (value := os.getenv(name)) is not None
@@ -424,6 +541,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "advanced:<group>[,<group>]"
         ),
     )
+    parser.add_argument(
+        "--log-level",
+        default=None,
+        help="Operational stderr log level: off (default), error, warning, info, debug",
+    )
     return parser
 
 
@@ -431,6 +553,8 @@ def main() -> None:
     args = _build_parser().parse_args()
     try:
         profile = parse_tool_profile(args.tool_profile)
+        if args.log_level is not None:
+            logger.set_level(parse_log_level(args.log_level))
     except ValueError as exc:
         _build_parser().error(str(exc))
     if args.backend_command:

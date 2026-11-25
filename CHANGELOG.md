@@ -4,6 +4,76 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-26
+
+### Added
+
+- Lazy static MCP resources and user-invoked workflow prompts (`debug_local`,
+  `triage_core`, `debug_remote`, `analyze_stripped_binary`), plus real discovery
+  profiles (`full`, `core`, `advanced:<group>`), machine-readable registry
+  metadata (`server.json`), and `scripts/validate_registry_metadata.py`.
+- Non-loopback HTTP deployment guardrails (`--allow-remote`,
+  `--allow-unsafe-over-http`, bearer authentication, Host/Origin allow-lists)
+  and bounded MCP progress reporting on long-running operations.
+- Session initialization profiles (`gdb_apply_init_profile`) including
+  `source_paths`, `remote_paths`, unsafe-gated `init_file`, and the new
+  `debug_info` profile (`substitute_paths`, `debug_file_directories`, and opt-in
+  `debuginfod` configuration), recorded in redacted `gdb_export_session_bundle`
+  diagnostics.
+- Opaque HMAC-signed pagination cursors (`gdb1.*`) rejecting non-canonical
+  base64url inputs, plus deterministic response-budget checks
+  (`scripts/check_response_budgets.py`), live GDB feature probes
+  (`scripts/probe_gdb_features.py`), MCP stdio/Streamable HTTP interop tests,
+  and clean wheel install verification (`scripts/check_release_install.py`).
+- Workflow and compatibility cookbooks (`docs/WORKFLOWS.md`,
+  `docs/COMPATIBILITY.md`) and public MCP compatibility contract tooling
+  (`gdb_mcp.contract`, `scripts/check_mcp_contract.py`,
+  `docs/COMPATIBILITY_CONTRACT.md`).
+- Opt-in structured operational logging to `stderr` (`--log-level` /
+  `GDB_MCP_LOG_LEVEL`) with automatic redaction of bearer tokens, passwords,
+  URL credentials, inferior arguments, environment variables, and raw payloads.
+- Standardized failure metadata (`error_code`, `retryable`, and optional
+  `suggested_action`) across all tool error responses while preserving existing
+  `ok: true` response shapes.
+- Optional idle-session TTL (`--idle-session-ttl` /
+  `GDB_MCP_IDLE_SESSION_TTL_SECONDS`) and bounded history retention
+  (`GDB_MCP_MAX_RECENT_RECORDS`, `GDB_MCP_MAX_RECENT_COMMANDS`), plus automatic
+  pruning of dead sessions before enforcing `max_sessions`.
+- Deterministic agent scenario evaluation harness (`gdb_mcp.eval_harness`,
+  `scripts/run_eval_harness.py`).
+
+### Changed
+
+- Upgraded the `mcp` dependency from `1.x` (`FastMCP`) to `mcp>=2.3.0,<3`
+  (`MCPServer`), adapting HTTP transport security parameters, Streamable HTTP
+  client/server APIs, `LazyBackend` single-owner lifecycle, and `mcp 2.x`
+  snake_case Pydantic response attributes.
+- Split ELF subprocess execution (`gdb_mcp.tools.elf`) and inspection
+  formatting/pagination (`gdb_mcp.tools.inspection_format`) behind unchanged
+  tool registration APIs, and deduplicated redundant `readelf` and `vmmap` calls
+  in `gdb_binary_summary`, `gdb_elf_info`, and `gdb_pwn_context`.
+- Raised GDB/MI stdout `StreamReader` limit to 4 MiB with bounded recovery for
+  oversized lines so large outputs no longer terminate the session reader loop.
+- Enabled concurrent request handling, `notifications/cancelled` propagation,
+  and backend disconnect recovery in the lazy stdio proxy (`gdb_mcp.lazy`).
+- Updated development tooling requirements (`build>=1.6.0`, `pytest>=9.1.1`,
+  `ruff>=0.16.6`, `setuptools>=84.0.0`) and CI artifact upload action v7.
+
+### Fixed
+
+- Fixed `parse_checksec` reading `GNU_STACK` alignment (`0x10`) instead of
+  segment flags (`RW`/`RWE`), and recognized `(FLAGS_1)` `NOW` for Full RELRO.
+- Closed safe-mode `<<=` and `>>=` mutation bypasses in `_require_read_expression`
+  and tightened NUL-byte validation across single-line inputs.
+- Fixed session, `gdbserver`, `readelf`, and temporary `rr` directory leaks on
+  cancellation or startup failures.
+- Hardened GDB/MI parser with explicit nesting-depth and line-length limits,
+  complete `c_escape` control-character escaping, and bounded octal escapes.
+- Hardened HTTP security validation against wildcard host/origin allow-lists,
+  invalid OAuth URLs, malformed bearer tokens, and bracketed IPv6 loopback hosts.
+- Updated `scripts/sync_release_version.py` to also sync `BeaCox/gdb-mcp@vX.Y.Z`
+  marketplace references, and fixed Codex/Claude plugin update flows.
+
 ## [0.4.0] - 2026-07-06
 
 ### Added

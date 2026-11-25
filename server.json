@@ -1,6 +1,6 @@
 {
   "name": "gdb-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Multi-session Model Context Protocol server for GDB and gdbserver.",
   "repository": "https://github.com/BeaCox/gdb-mcp",
   "homepage": "https://github.com/BeaCox/gdb-mcp",
@@ -37,7 +37,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/BeaCox/gdb-mcp.git@v0.4.0",
+        "git+https://github.com/BeaCox/gdb-mcp.git@v0.5.0",
         "gdb-mcp"
       ]
     }

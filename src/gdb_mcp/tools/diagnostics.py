@@ -9,11 +9,12 @@ from collections.abc import Awaitable, Callable
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from ..compatibility import probe_gdb_features
 from ..config import ServerConfig
+from ..observability import redact_mapping
 from ..pagination import paginate_items
 from ..resources import command_reference_index, resource_index, tool_profile
 from ..responses import error_response
@@ -45,7 +46,7 @@ def configure(
 
 
 def register_tools(
-    mcp: FastMCP[Any],
+    mcp: MCPServer[Any],
     *,
     read_only: ToolAnnotations,
     session_mutation: ToolAnnotations,
@@ -271,6 +272,28 @@ async def _breakpoint_summary(session: Any) -> dict[str, Any]:
     }
 
 
+def _redacted_applied_profiles(profiles: object) -> list[dict[str, Any]]:
+    if not isinstance(profiles, list):
+        return []
+    redacted: list[dict[str, Any]] = []
+    for item in profiles:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        config = item.get("configuration")
+        safe_config = redact_mapping(config) if isinstance(config, dict) else {}
+        if name == "init_file" and isinstance(safe_config, dict) and "init_file" in safe_config:
+            safe_config = {"configured": True}
+        redacted.append(
+            {
+                "name": name,
+                "applied_at": item.get("applied_at"),
+                "configuration": safe_config,
+            }
+        )
+    return redacted
+
+
 async def gdb_export_session_bundle(
     session_id: str,
     command_limit: int = 100,
@@ -310,6 +333,9 @@ async def gdb_export_session_bundle(
                 "created_at": description["created_at"],
                 "last_activity_at": description["last_activity_at"],
                 "last_stop": _last_stop_summary(description["last_stop"]),
+                "applied_profiles": _redacted_applied_profiles(
+                    description.get("applied_profiles")
+                ),
             },
             "gdb_version": gdb_version,
             "breakpoints": await _breakpoint_summary(session),
@@ -633,6 +659,7 @@ async def gdb_server_health() -> dict[str, Any]:
         "rr_version": rr_version,
         "unsafe_execute_enabled": runtime_config.allow_unsafe_execute,
         "max_sessions": runtime_config.max_sessions,
+        "idle_session_ttl_seconds": runtime_config.idle_session_ttl_seconds,
         "output_limit_chars": runtime_config.output_limit_chars,
         "capability_tool": "gdb_capabilities",
         "session_count": len(sessions),
