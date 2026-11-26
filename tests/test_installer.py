@@ -51,25 +51,6 @@ class InstallerTests(unittest.TestCase):
             ["/bin/codex", "plugin", "add", "gdb-mcp@beacox"],
         )
 
-    def test_gemini_direct_commands(self) -> None:
-        with patch("gdb_mcp.installer.shutil.which", return_value="/bin/gemini"):
-            info = client_info("gemini")
-        self.assertEqual(info.plugin_install, [])
-        self.assertEqual(
-            info.direct_mcp_install,
-            [
-                "/bin/gemini",
-                "mcp",
-                "add",
-                "gdb",
-                "--",
-                "uvx",
-                "--from",
-                "beacox-gdb-mcp",
-                "gdb-mcp",
-            ],
-        )
-
     def test_direct_commands_use_beacox_gdb_mcp_source(self) -> None:
         self.assertEqual(PYPI_PACKAGE_NAME, "beacox-gdb-mcp")
         self.assertEqual(PACKAGE_SOURCE, "beacox-gdb-mcp")
@@ -98,7 +79,11 @@ class InstallerTests(unittest.TestCase):
         payload = configuration()
         self.assertEqual(
             set(payload),
-            {"claude_code", "codex", "gemini", "cursor", "vscode", "windsurf"},
+            {"claude_code", "codex", "antigravity", "cursor", "vscode", "windsurf"},
+        )
+        self.assertEqual(
+            configuration(client="agy"),
+            configuration(client="antigravity"),
         )
         self.assertEqual(
             configuration(client="cursor")["mcpServers"]["gdb"],
@@ -203,8 +188,8 @@ class InstallerTests(unittest.TestCase):
 
     def test_parse_explicit_targets(self) -> None:
         self.assertEqual(
-            parse_targets("claude,codex,gemini,claude"),
-            ["claude", "codex", "gemini"],
+            parse_targets("claude,codex,claude"),
+            ["claude", "codex"],
         )
         with self.assertRaises(ValueError):
             parse_targets("unknown")

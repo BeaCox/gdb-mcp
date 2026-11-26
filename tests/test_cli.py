@@ -134,12 +134,17 @@ class CliTests(unittest.TestCase):
         )
 
         stdout_buf = io.StringIO()
+        with redirect_stdout(stdout_buf):
+            cli.main(["config", "agy", "--installed"])
+        self.assertEqual(json.loads(stdout_buf.getvalue()), payload)
+
+        stdout_buf = io.StringIO()
         with patch("gdb_mcp.installer.shutil.which", return_value=None), redirect_stdout(
             stdout_buf
         ):
             cli.main(["clients"])
         self.assertIn("claude: not found", stdout_buf.getvalue())
-        self.assertIn("gemini: not found", stdout_buf.getvalue())
+        self.assertIn("codex: not found", stdout_buf.getvalue())
 
         with patch("gdb_mcp.doctor.run_doctor", return_value=0) as mock_doctor:
             with self.assertRaises(SystemExit) as exc:

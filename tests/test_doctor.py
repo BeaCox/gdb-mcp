@@ -46,6 +46,12 @@ class DoctorTests(unittest.TestCase):
             home = root / "home"
             home.mkdir()
             (home / ".claude.json").write_text('{"mcpServers":{"gdb":{}}}', encoding="utf-8")
+            agy_dir = home / ".gemini" / "config"
+            agy_dir.mkdir(parents=True)
+            (agy_dir / "mcp_config.json").write_text(
+                '{"mcpServers":{"gdb":{"command":"gdb-mcp"}}}',
+                encoding="utf-8",
+            )
 
             with (
                 patch("gdb_mcp.doctor.shutil.which", side_effect=_healthy_which),
@@ -69,7 +75,7 @@ class DoctorTests(unittest.TestCase):
         text = format_doctor_report(report)
         self.assertIn("beacox-gdb-mcp", text)
         self.assertIn("[OK  ] gdb:", text)
-        self.assertIn("Registered in: claude", text)
+        self.assertIn("Registered in: claude, antigravity", text)
 
     def test_missing_gdb_and_restricted_container_produce_actionable_fixes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -15,10 +15,10 @@ From an installed package (`uv tool install beacox-gdb-mcp`):
 ```bash
 claude mcp add --scope user gdb -- gdb-mcp
 codex mcp add gdb -- gdb-mcp
-gemini mcp add gdb -- gdb-mcp
 ```
 
-Or add the stdio server to any JSON-based MCP client (`.cursor/mcp.json`,
+Or add the stdio server to any JSON-based MCP client
+(`~/.gemini/config/mcp_config.json` for Antigravity, `.cursor/mcp.json`,
 Windsurf, etc.; see [docs/INSTALL.md](../docs/INSTALL.md) for all clients and
 VS Code `servers` syntax):
 

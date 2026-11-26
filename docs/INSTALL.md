@@ -73,14 +73,13 @@ With `beacox-gdb-mcp` installed via `uv tool install` or `pipx`:
 ```bash
 claude mcp add --scope user gdb -- gdb-mcp
 codex mcp add gdb -- gdb-mcp
-gemini mcp add gdb -- gdb-mcp
 ```
 
 Or add a generic stdio snippet directly to your client's configuration file
-(for example `.cursor/mcp.json` for Cursor or
-`~/.codeium/windsurf/mcp_config.json` for Windsurf; for VS Code `.vscode/mcp.json`,
-use the top-level `"servers"` key with `"type": "stdio"` via
-`gdb-mcp config vscode --installed`):
+(for example `~/.gemini/config/mcp_config.json` for Antigravity / `agy`,
+`.cursor/mcp.json` for Cursor, or `~/.codeium/windsurf/mcp_config.json` for
+Windsurf; for VS Code `.vscode/mcp.json`, use the top-level `"servers"` key
+with `"type": "stdio"` via `gdb-mcp config vscode --installed`):
 
 ```json
 {
@@ -99,6 +98,7 @@ Or use the built-in helper to inspect or install configurations:
 gdb-mcp clients
 gdb-mcp install auto --direct --installed
 gdb-mcp config --installed
+gdb-mcp config agy --installed
 gdb-mcp config cursor --installed
 gdb-mcp config vscode --installed
 gdb-mcp config windsurf --installed

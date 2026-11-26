@@ -7,7 +7,7 @@
 <h1 align="center">gdb-mcp</h1>
 
 <p align="center">
-  Multi-session GDB control for Claude Code, Codex, Gemini CLI, and any MCP client.
+  Multi-session GDB control for Antigravity, Claude Code, Codex, and any MCP client.
 </p>
 
 <p align="center">
@@ -89,12 +89,13 @@ gdb-mcp doctor
 ```bash
 claude mcp add --scope user gdb -- gdb-mcp
 codex mcp add gdb -- gdb-mcp
-gemini mcp add gdb -- gdb-mcp
 ```
 
-Generate JSON snippets for Cursor, VS Code, Windsurf, Claude, Codex, or Gemini:
+Generate JSON snippets for Antigravity (`agy`), Cursor, VS Code, Windsurf,
+Claude, or Codex:
 
 ```bash
+gdb-mcp config agy --installed
 gdb-mcp config cursor --installed
 gdb-mcp config vscode --installed
 ```

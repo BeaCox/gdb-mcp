@@ -13,12 +13,13 @@ from typing import Any, Literal
 
 from . import __version__
 
-ClientName = Literal["claude", "codex", "gemini"]
+ClientName = Literal["claude", "codex"]
 ConfigClientName = Literal[
     "claude",
     "claude_code",
     "codex",
-    "gemini",
+    "antigravity",
+    "agy",
     "cursor",
     "vscode",
     "windsurf",
@@ -192,36 +193,13 @@ def client_info(
                 MCP_SERVER_NAME,
             ],
         )
-    if name == "gemini":
-        command = shutil.which("gemini") or "gemini"
-        return ClientInfo(
-            name=name,
-            command=command,
-            available=shutil.which("gemini") is not None,
-            plugin_install=[],
-            plugin_uninstall=[],
-            direct_mcp_install=[
-                command,
-                "mcp",
-                "add",
-                MCP_SERVER_NAME,
-                "--",
-                *server_command,
-            ],
-            direct_mcp_uninstall=[
-                command,
-                "mcp",
-                "remove",
-                MCP_SERVER_NAME,
-            ],
-        )
     raise ValueError(f"Unsupported client: {name}")
 
 
 def detect_clients() -> list[ClientName]:
     return [
         name
-        for name in ("claude", "codex", "gemini")
+        for name in ("claude", "codex")
         if client_info(name).available
     ]
 
@@ -231,16 +209,16 @@ def parse_targets(value: str | None) -> list[ClientName]:
         detected = detect_clients()
         if not detected:
             raise RuntimeError(
-                "No supported clients found. Install Claude Code, Codex, or Gemini CLI first."
+                "No supported clients found. Install Claude Code or Codex first."
             )
         return detected
 
     targets: list[ClientName] = []
     for raw in value.split(","):
         name = raw.strip().lower()
-        if name not in {"claude", "codex", "gemini"}:
+        if name not in {"claude", "codex"}:
             raise ValueError(
-                f"Unsupported client {name!r}; choose claude, codex, gemini, or auto"
+                f"Unsupported client {name!r}; choose claude, codex, or auto"
             )
         if name not in targets:
             targets.append(name)  # type: ignore[arg-type]
@@ -374,7 +352,7 @@ def configuration(
                 MCP_SERVER_NAME: dict(server),
             }
         },
-        "gemini": {
+        "antigravity": {
             "mcpServers": {
                 MCP_SERVER_NAME: dict(server),
             }
@@ -404,10 +382,12 @@ def configuration(
     normalized = client.strip().lower().replace("-", "_")
     if normalized == "claude":
         normalized = "claude_code"
+    elif normalized == "agy":
+        normalized = "antigravity"
     if normalized not in all_configs:
         raise ValueError(
             f"Unsupported config client {client!r}; choose one of: "
-            "claude, codex, gemini, cursor, vscode, windsurf"
+            "claude, codex, antigravity (agy), cursor, vscode, windsurf"
         )
     return all_configs[normalized]
 
@@ -427,7 +407,7 @@ def print_configuration(
 
 
 def list_clients() -> None:
-    for name in ("claude", "codex", "gemini"):
+    for name in ("claude", "codex"):
         info = client_info(name)
         status = "available" if info.available else "not found"
         print(f"{name}: {status}")

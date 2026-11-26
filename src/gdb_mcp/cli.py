@@ -220,7 +220,7 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         "clients",
         nargs="?",
         default="auto",
-        help="Client list (claude,codex,gemini) or 'auto' (default)",
+        help="Client list (claude,codex) or 'auto' (default)",
     )
     install_parser.add_argument(
         "--direct",
@@ -257,7 +257,7 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         "clients",
         nargs="?",
         default="auto",
-        help="Client list (claude,codex,gemini) or 'auto' (default)",
+        help="Client list (claude,codex) or 'auto' (default)",
     )
     uninstall_parser.add_argument(
         "--direct",
@@ -284,7 +284,7 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         "client",
         nargs="?",
         default=None,
-        help="Optional client name: claude, codex, gemini, cursor, vscode, windsurf",
+        help="Optional client name: claude, codex, antigravity (agy), cursor, vscode, windsurf",
     )
     config_parser.add_argument(
         "--source",

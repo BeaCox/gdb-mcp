@@ -5,9 +5,9 @@
 ```text
 gdb-mcp [serve]            # Default lazy stdio MCP proxy
 gdb-mcp serve-http         # Standalone Streamable HTTP or SSE backend
-gdb-mcp install [clients]  # Configure Claude Code, Codex, or Gemini CLI
+gdb-mcp install [clients]  # Configure Claude Code or Codex
 gdb-mcp uninstall [clients]
-gdb-mcp config [client]    # Print JSON for claude, codex, gemini, cursor, vscode, windsurf
+gdb-mcp config [client]    # Print JSON for claude, codex, antigravity (agy), cursor, vscode, windsurf
 gdb-mcp clients            # List supported clients and CLI availability
 gdb-mcp doctor [--json]    # Verify GDB, gdbserver, rr, ptrace_scope, perf_event_paranoid, container caps
 ```

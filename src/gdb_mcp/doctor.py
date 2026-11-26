@@ -80,17 +80,22 @@ def _has_cap_sys_ptrace(proc_status_path: Path = _PROC_STATUS_PATH) -> bool | No
 
 
 def _detect_client_registrations(home_dir: Path) -> dict[str, dict[str, Any]]:
-    checks: dict[str, tuple[Path, tuple[str, ...]]] = {
-        "claude": (home_dir / ".claude.json", ("gdb-mcp", "beacox-gdb-mcp", '"gdb"')),
+    checks: dict[str, tuple[Path, str, tuple[str, ...]]] = {
+        "claude": (home_dir / ".claude.json", "claude", ("gdb-mcp", "beacox-gdb-mcp", '"gdb"')),
         "codex": (
             home_dir / ".codex" / "config.toml",
+            "codex",
             ("gdb-mcp", "beacox-gdb-mcp", "mcp_servers.gdb"),
         ),
-        "gemini": (home_dir / ".gemini" / "settings.json", ("gdb-mcp", "beacox-gdb-mcp", '"gdb"')),
+        "antigravity": (
+            home_dir / ".gemini" / "config" / "mcp_config.json",
+            "agy",
+            ("gdb-mcp", "beacox-gdb-mcp", '"gdb"'),
+        ),
     }
     clients: dict[str, dict[str, Any]] = {}
-    for name, (config_path, markers) in checks.items():
-        exe_path = shutil.which(name)
+    for name, (config_path, exe_name, markers) in checks.items():
+        exe_path = shutil.which(exe_name)
         registered = False
         if config_path.exists():
             try:
@@ -334,7 +339,10 @@ async def collect_doctor_report(
                 "status": "info",
                 "detail": "No client MCP registration detected yet",
                 "clients": clients,
-                "fix": "claude mcp add --scope user gdb -- gdb-mcp  # or codex / gemini",
+                "fix": (
+                    "claude mcp add --scope user gdb -- gdb-mcp  "
+                    "# or codex, or ~/.gemini/config/mcp_config.json (agy)"
+                ),
             }
         )
 
