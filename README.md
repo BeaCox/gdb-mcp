@@ -99,11 +99,19 @@ gdb-mcp config cursor --installed
 gdb-mcp config vscode --installed
 ```
 
-For clients that preload all tool schemas (such as Claude Desktop or smaller
-context windows), pass `--tool-profile core`:
+For schema-constrained clients or smaller context windows, pass
+`--tool-profile core` in the server command arguments (or set
+`GDB_MCP_TOOL_PROFILE=core`):
 
-```bash
-claude mcp add --scope user gdb -- gdb-mcp --tool-profile core
+```json
+{
+  "mcpServers": {
+    "gdb": {
+      "command": "gdb-mcp",
+      "args": ["--tool-profile", "core"]
+    }
+  }
+}
 ```
 
 ## Update

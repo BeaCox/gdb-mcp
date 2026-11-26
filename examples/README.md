@@ -10,24 +10,32 @@ cc -g -gdwarf-4 -O0 examples/hello.c -o /tmp/gdb-mcp-hello
 
 ## Configure the MCP Server
 
-From an installed wheel (`uv tool install beacox-gdb-mcp`):
+From an installed package (`uv tool install beacox-gdb-mcp`):
 
 ```bash
+claude mcp add --scope user gdb -- gdb-mcp
 codex mcp add gdb -- gdb-mcp
+gemini mcp add gdb -- gdb-mcp
 ```
 
-From PyPI via `uvx`:
+Or add the stdio server to any JSON-based MCP client (`.cursor/mcp.json`,
+Windsurf, etc.; see [docs/INSTALL.md](../docs/INSTALL.md) for all clients and
+VS Code `servers` syntax):
 
-```bash
-codex mcp add gdb -- uvx --from beacox-gdb-mcp gdb-mcp
+```json
+{
+  "mcpServers": {
+    "gdb": {
+      "command": "gdb-mcp",
+      "args": []
+    }
+  }
+}
 ```
 
-From Git:
-
-```bash
-codex mcp add gdb -- \
-  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.6.0 gdb-mcp
-```
+If running ephemerally via `uvx` instead of a persistent install, use
+`uvx --from beacox-gdb-mcp gdb-mcp` (or pin a Git snapshot with
+`uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.6.0 gdb-mcp`).
 
 `gdb-mcp` is the client-facing lazy stdio proxy. The MCP client discovers tools
 at startup, and the full backend starts only when the first `gdb_*` tool is
