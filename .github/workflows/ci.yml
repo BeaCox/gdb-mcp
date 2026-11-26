@@ -16,9 +16,9 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -29,38 +29,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      - name: Lint
-        run: uv run ruff check .
-
-      - name: Check release version references
-        run: uv run python scripts/sync_release_version.py --check
-
-      - name: Validate registry discovery metadata
-        run: uv run python scripts/validate_registry_metadata.py
-
-      - name: Check lazy MCP startup
-        run: uv run python scripts/check_lazy_startup.py --budget 5 --initialize-budget 3
-
-      - name: Check response budgets
-        run: uv run python scripts/check_response_budgets.py
-
-      - name: Test
-        run: uv run pytest --cov=gdb_mcp --cov-report=term-missing
-
-      - name: Validate plugin manifests
-        run: |
-          uv run python -m json.tool .claude-plugin/marketplace.json >/dev/null
-          uv run python -m json.tool .claude-plugin/plugin.json >/dev/null
-          uv run python -m json.tool .agents/plugins/marketplace.json >/dev/null
-          uv run python -m json.tool plugins/gdb-mcp/.codex-plugin/plugin.json >/dev/null
-          uv run python -m json.tool plugins/gdb-mcp/.mcp.json >/dev/null
-          uv run python -m json.tool server.json >/dev/null
-
-      - name: Build
-        run: uv build
-
-      - name: Check clean wheel installation
-        run: uv run python scripts/check_release_install.py dist/*.whl
+      - name: Run full verification suite
+        run: make check
 
   gdb-compatibility:
     runs-on: ubuntu-latest
@@ -75,7 +45,7 @@ jobs:
             python-version: "3.12"
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install native compatibility dependencies
         run: |
@@ -83,7 +53,7 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y \
             binutils ca-certificates g++ gcc gdb gdbserver
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -99,7 +69,7 @@ jobs:
 
       - name: Upload GDB feature report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gdb-features-ubuntu-${{ matrix.ubuntu-version }}-py${{ matrix.python-version }}
           path: gdb-features.json

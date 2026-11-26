@@ -53,7 +53,7 @@ def main() -> int:
     matches = [
         wheel
         for wheel in args.wheels
-        if wheel.name.startswith(f"gdb_mcp-{__version__}-")
+        if wheel.name.startswith(f"beacox_gdb_mcp-{__version__}-")
     ]
     if len(matches) != 1:
         raise RuntimeError(
@@ -76,6 +76,9 @@ def main() -> int:
 
         clean_env = os.environ.copy()
         clean_env.pop("PYTHONPATH", None)
+        backend_executable = environment / (
+            "Scripts/gdb-mcp-backend.exe" if os.name == "nt" else "bin/gdb-mcp-backend"
+        )
         _run(
             [
                 str(python),
@@ -84,6 +87,8 @@ def main() -> int:
             ],
             env=clean_env,
         )
+        _run([str(executable), "--version"], env=clean_env)
+        _run([str(backend_executable), "--version"], env=clean_env)
         _run(
             [
                 sys.executable,

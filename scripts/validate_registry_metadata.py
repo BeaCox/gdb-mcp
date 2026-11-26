@@ -6,7 +6,9 @@ import asyncio
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
+from gdb_mcp import DIST_NAME
 from gdb_mcp.lazy import list_proxy_tools
 from gdb_mcp.prompts import prompt_index
 from gdb_mcp.resources import resource_index
@@ -19,8 +21,40 @@ def _digest(names: list[str]) -> str:
     return hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest()
 
 
-async def validate(metadata: dict) -> list[str]:
+def validate_official_registry(server_manifest: dict[str, Any], expected_version: str) -> list[str]:
     errors: list[str] = []
+    if server_manifest.get("$schema") != (
+        "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
+    ):
+        errors.append("server.json $schema must point to official MCP Registry schema")
+    if server_manifest.get("name") != "io.github.beacox/gdb-mcp":
+        errors.append("server.json name must be io.github.beacox/gdb-mcp")
+    if server_manifest.get("version") != expected_version:
+        errors.append("server.json version does not match gdb-mcp.meta.json")
+    packages = server_manifest.get("packages") or []
+    if not packages or not isinstance(packages, list):
+        errors.append("server.json must define packages")
+    else:
+        pkg = packages[0]
+        if pkg.get("registryType") != "pypi":
+            errors.append("server.json packages[0].registryType must be pypi")
+        if pkg.get("identifier") != DIST_NAME:
+            errors.append(f"server.json packages[0].identifier must be {DIST_NAME}")
+        if pkg.get("version") != expected_version:
+            errors.append("server.json packages[0].version does not match server.json version")
+        if pkg.get("transport", {}).get("type") != "stdio":
+            errors.append("server.json packages[0].transport.type must be stdio")
+    return errors
+
+
+async def validate(
+    metadata: dict[str, Any],
+    server_manifest: dict[str, Any] | None = None,
+) -> list[str]:
+    errors: list[str] = []
+    if metadata.get("distribution") != DIST_NAME:
+        errors.append(f"gdb-mcp.meta.json distribution must be {DIST_NAME}")
+
     advertised = metadata["capabilities"]
     profile_metadata = advertised["toolProfiles"]
 
@@ -54,17 +88,22 @@ async def validate(metadata: dict) -> list[str]:
         errors.append("registry prompts do not match MCP prompts/list")
     if metadata["security"]["unsafeTools"] != ADVANCED_TOOL_GROUPS["unsafe"]["tools"]:
         errors.append("registry unsafeTools do not match the unsafe profile")
+
+    if server_manifest is not None:
+        errors.extend(validate_official_registry(server_manifest, str(metadata.get("version"))))
+
     return errors
 
 
 def main() -> int:
-    metadata = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
-    errors = asyncio.run(validate(metadata))
+    metadata = json.loads((ROOT / "gdb-mcp.meta.json").read_text(encoding="utf-8"))
+    server_manifest = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+    errors = asyncio.run(validate(metadata, server_manifest))
     if errors:
         for error in errors:
             print(f"error: {error}")
         return 1
-    print("server.json matches tools, resources, prompts, and safety profiles")
+    print("server.json and gdb-mcp.meta.json match tools, resources, prompts, and safety profiles")
     return 0
 
 

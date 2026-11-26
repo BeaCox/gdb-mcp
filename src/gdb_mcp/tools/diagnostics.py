@@ -12,6 +12,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
+from .. import DIST_NAME, __version__
 from ..compatibility import probe_gdb_features
 from ..config import ServerConfig
 from ..observability import redact_mapping
@@ -604,10 +605,12 @@ async def gdb_server_health() -> dict[str, Any]:
     """Report server capabilities, safety mode, dependencies, and session count."""
 
     runtime_config = _require_config()
-    try:
-        package_version = version("gdb-mcp")
-    except PackageNotFoundError:
-        package_version = "0+unknown"
+    package_version = __version__
+    if package_version == "0+unknown":
+        try:
+            package_version = version(DIST_NAME)
+        except PackageNotFoundError:
+            package_version = "0+unknown"
     gdb_path = shutil.which("gdb")
     gdbserver_path = shutil.which("gdbserver")
     rr_path = shutil.which("rr")

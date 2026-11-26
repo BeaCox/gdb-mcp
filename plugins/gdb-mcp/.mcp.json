@@ -4,7 +4,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/BeaCox/gdb-mcp.git@v0.5.0",
+        "beacox-gdb-mcp==0.6.0",
         "gdb-mcp"
       ]
     }

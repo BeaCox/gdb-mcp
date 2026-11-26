@@ -68,7 +68,7 @@ class McpInteroperabilityTests(unittest.TestCase):
         FAKE_GDB.chmod(0o755)
         params = StdioServerParameters(
             command=sys.executable,
-            args=["-m", "gdb_mcp.server"],
+            args=["-m", "gdb_mcp.server", "--progress"],
             env=_source_env(FAKE_GDB_HOLD_RUN="1"),
             cwd=ROOT,
         )
@@ -160,6 +160,47 @@ class McpInteroperabilityTests(unittest.TestCase):
                     ]
                     self.assertTrue(run_rows, commands)
                     self.assertEqual(run_rows[-1]["status"], "cancelled")
+                finally:
+                    await session.call_tool(
+                        "gdb_close_session", {"session_id": session_id}
+                    )
+
+    def test_stdio_suppresses_progress_by_default(self) -> None:
+        asyncio.run(self._test_stdio_suppresses_progress_by_default())
+
+    async def _test_stdio_suppresses_progress_by_default(self) -> None:
+        FAKE_GDB.chmod(0o755)
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "gdb_mcp.server"],
+            env=_source_env(),
+            cwd=ROOT,
+        )
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                created = _payload(
+                    await session.call_tool(
+                        "gdb_create_session",
+                        {"gdb_path": str(FAKE_GDB)},
+                    )
+                )
+                session_id = created["session"]["session_id"]
+                progress_events = []
+
+                async def progress_callback(progress, total, message) -> None:
+                    progress_events.append((progress, total, message))
+
+                try:
+                    result = _payload(
+                        await session.call_tool(
+                            "gdb_continue",
+                            {"session_id": session_id, "timeout": 2.0},
+                            progress_callback=progress_callback,
+                        )
+                    )
+                    self.assertTrue(result["ok"], result)
+                    self.assertEqual(progress_events, [])
                 finally:
                     await session.call_tool(
                         "gdb_close_session", {"session_id": session_id}

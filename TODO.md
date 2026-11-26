@@ -1,6 +1,6 @@
 # Roadmap
 
-Reviewed 2026-11-26. Current released version: `0.5.0`.
+Reviewed 2026-11-26. Current released version: `0.6.0`.
 
 The `0.5.0` release work is prepared. This roadmap tracks only work that has
 not shipped yet, grouped by delivery horizon. Version headings are planning

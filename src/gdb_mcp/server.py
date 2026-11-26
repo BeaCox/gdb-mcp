@@ -4,21 +4,28 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import os
 import shutil  # noqa: F401 - kept for compatibility with callers patching this module
+import signal
+import sys
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
+from . import __version__
 from .config import ServerConfig, _env_bool
 from .http_security import HTTP_TRANSPORTS, configure_http_security
 from .observability import logger, parse_log_level
+from .process import set_pdeathsig
 from .prompts import register_prompts
 from .resources import register_resources
 from .session import CommandResult, GdbMcpError, GdbSession, SessionManager, _truncate_text
-from .tool_profiles import parse_tool_profile
+from .tool_profiles import parse_tool_names, parse_tool_selection
 from .tools import binary as _binary_tools
 from .tools import breakpoints as _breakpoint_tools
 from .tools import diagnostics as _diagnostics_tools
@@ -30,7 +37,12 @@ from .tools import shared as _shared_tools
 
 _COMPAT_EXPORTS = (CommandResult, GdbMcpError, GdbSession, _truncate_text)
 
-runtime_config = ServerConfig.from_env()
+_env_config_error: ValueError | None = None
+try:
+    runtime_config = ServerConfig.from_env()
+except ValueError as exc:
+    _env_config_error = exc
+    runtime_config = ServerConfig()
 logger.set_level(runtime_config.log_level)
 manager = SessionManager(
     max_sessions=runtime_config.max_sessions,
@@ -265,21 +277,40 @@ register_resources(mcp)
 register_prompts(mcp)
 
 
-async def apply_tool_profile(profile_value: str) -> str:
-    """Restrict the registered tool surface and return the canonical profile name."""
+async def apply_tool_profile(
+    profile_value: str,
+    *,
+    include_tools: str | Sequence[str] | None = None,
+    exclude_tools: str | Sequence[str] | None = None,
+    profile_explicit: bool | None = None,
+) -> str:
+    """Restrict the registered tool surface and return the canonical selection name."""
 
-    profile = parse_tool_profile(profile_value)
+    selection = parse_tool_selection(
+        profile_value,
+        include_tools=include_tools,
+        exclude_tools=exclude_tools,
+        profile_explicit=profile_explicit,
+    )
     tools = await mcp.list_tools()
-    allowed = profile.allowed_names({tool.name for tool in tools})
+    allowed = selection.allowed_names({tool.name for tool in tools})
     for tool in tools:
         if tool.name not in allowed:
             mcp.remove_tool(tool.name)
-    runtime_config.tool_profile = profile.canonical_name
-    return profile.canonical_name
+    runtime_config.tool_profile = selection.canonical_name
+    runtime_config.tool_profile_explicit = selection.profile_explicit
+    runtime_config.include_tools = selection.include_tools
+    runtime_config.exclude_tools = selection.exclude_tools
+    return selection.canonical_name
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Full gdb-mcp backend server")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "--transport",
         choices=["stdio", "streamable-http", "sse"],
@@ -291,13 +322,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-remote",
         action="store_true",
-        default=_env_bool("GDB_MCP_ALLOW_REMOTE", False),
+        default=False,
         help="Acknowledge a protected non-loopback HTTP deployment",
     )
     parser.add_argument(
         "--allow-unsafe-over-http",
         action="store_true",
-        default=_env_bool("GDB_MCP_ALLOW_UNSAFE_OVER_HTTP", False),
+        default=False,
         help="Allow unsafe tools on an authenticated non-loopback HTTP deployment",
     )
     parser.add_argument(
@@ -335,50 +366,164 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-sessions",
         type=int,
-        default=runtime_config.max_sessions,
+        default=None,
         help="Maximum live GDB sessions; 0 means unlimited",
     )
     parser.add_argument(
         "--output-limit-chars",
         type=int,
-        default=runtime_config.output_limit_chars,
+        default=None,
         help="Approximate output limit per tool result",
     )
     parser.add_argument(
         "--tool-profile",
-        default=runtime_config.tool_profile,
+        default=None,
         help=(
             "Discovered tools: full (default), core, or "
             "advanced:<group>[,<group>]"
         ),
     )
     parser.add_argument(
+        "--tools",
+        action="append",
+        default=None,
+        help="Explicitly expose only (or add to profile) comma-separated tool names",
+    )
+    parser.add_argument(
+        "--exclude-tools",
+        action="append",
+        default=None,
+        help="Comma-separated tool names to exclude after profile and --tools",
+    )
+    parser.add_argument(
         "--idle-session-ttl",
         type=float,
-        default=runtime_config.idle_session_ttl_seconds,
+        default=None,
         help="Optional idle session TTL in seconds (disabled by default)",
     )
     parser.add_argument(
         "--log-level",
-        default=runtime_config.log_level,
+        default=None,
         help="Operational stderr log level: off (default), error, warning, info, debug",
+    )
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        default=None,
+        help="Enable MCP notifications/progress (disabled by default)",
+    )
+    parser.add_argument(
+        "--no-progress",
+        dest="progress",
+        action="store_false",
+        help="Disable MCP notifications/progress",
     )
     return parser
 
 
-def main() -> None:
-    args = _build_parser().parse_args()
+_ATEXIT_REGISTERED = False
 
-    unsafe_enabled = runtime_config.allow_unsafe_execute or args.unsafe
+
+def _install_process_cleanup(*, stdio_transport: bool) -> None:
+    global _ATEXIT_REGISTERED
+    if not _ATEXIT_REGISTERED:
+        atexit.register(manager.terminate_all_sync)
+        _ATEXIT_REGISTERED = True
+
+    if stdio_transport and (parent_pid_raw := os.getenv("GDB_MCP_PARENT_PID")):
+        try:
+            parent_pid = int(parent_pid_raw)
+        except ValueError:
+            parent_pid = None
+        if parent_pid is not None and parent_pid > 0:
+            set_pdeathsig(signal.SIGTERM, expected_ppid=parent_pid)
+
+    if hasattr(signal, "SIGTERM"):
+        def _handle_sigterm(_signum: int, _frame: Any) -> None:
+            manager.terminate_all_sync()
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        try:
+            signal.signal(signal.SIGTERM, _handle_sigterm)
+        except ValueError:
+            pass
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if argv is None and Path(sys.argv[0]).name == "gdb-mcp-backend":
+        print(
+            "Warning: gdb-mcp-backend is deprecated; use 'gdb-mcp serve-http' "
+            "or 'gdb-mcp backend'.",
+            file=sys.stderr,
+        )
+
     try:
-        log_level = parse_log_level(args.log_level)
-        asyncio.run(apply_tool_profile(args.tool_profile))
+        if _env_config_error is not None:
+            raise _env_config_error
+        env_config = ServerConfig.from_env()
+        allow_remote = args.allow_remote or _env_bool("GDB_MCP_ALLOW_REMOTE", False)
+        allow_unsafe_over_http = args.allow_unsafe_over_http or _env_bool(
+            "GDB_MCP_ALLOW_UNSAFE_OVER_HTTP", False
+        )
+        unsafe_enabled = env_config.allow_unsafe_execute or args.unsafe
+        max_sessions = (
+            args.max_sessions if args.max_sessions is not None else env_config.max_sessions
+        )
+        if max_sessions < 0:
+            raise ValueError("--max-sessions must be >= 0")
+        output_limit_chars = (
+            args.output_limit_chars
+            if args.output_limit_chars is not None
+            else env_config.output_limit_chars
+        )
+        if output_limit_chars < 10_000:
+            raise ValueError("--output-limit-chars must be >= 10000")
+        idle_ttl = (
+            args.idle_session_ttl
+            if args.idle_session_ttl is not None
+            else env_config.idle_session_ttl_seconds
+        )
+        if idle_ttl is not None and idle_ttl <= 0:
+            idle_ttl = None
+        tool_profile = (
+            args.tool_profile if args.tool_profile is not None else env_config.tool_profile
+        )
+        profile_explicit = (args.tool_profile is not None) or env_config.tool_profile_explicit
+        include_tools = (
+            parse_tool_names(args.tools)
+            if args.tools is not None
+            else env_config.include_tools
+        )
+        exclude_tools = (
+            parse_tool_names(args.exclude_tools)
+            if args.exclude_tools is not None
+            else env_config.exclude_tools
+        )
+        progress_enabled = (
+            args.progress
+            if args.progress is not None
+            else env_config.progress_notifications
+        )
+        log_level = parse_log_level(
+            args.log_level if args.log_level is not None else env_config.log_level
+        )
+        asyncio.run(
+            apply_tool_profile(
+                tool_profile,
+                include_tools=include_tools,
+                exclude_tools=exclude_tools,
+                profile_explicit=profile_explicit,
+            )
+        )
         transport_security = configure_http_security(
             mcp,
             transport=args.transport,
             host=args.host,
-            allow_remote=args.allow_remote,
-            allow_unsafe_over_http=args.allow_unsafe_over_http,
+            allow_remote=allow_remote,
+            allow_unsafe_over_http=allow_unsafe_over_http,
             unsafe_enabled=unsafe_enabled,
             bearer_token=args.http_auth_token,
             issuer_url=args.http_auth_issuer_url,
@@ -387,19 +532,20 @@ def main() -> None:
             allowed_origins=args.http_allowed_origin or [],
         )
     except ValueError as exc:
-        _build_parser().error(str(exc))
+        parser.error(str(exc))
 
     runtime_config.allow_unsafe_execute = unsafe_enabled
-    runtime_config.max_sessions = max(0, args.max_sessions)
-    runtime_config.output_limit_chars = max(10_000, args.output_limit_chars)
-    runtime_config.idle_session_ttl_seconds = (
-        args.idle_session_ttl if args.idle_session_ttl and args.idle_session_ttl > 0 else None
-    )
+    runtime_config.max_sessions = max_sessions
+    runtime_config.output_limit_chars = output_limit_chars
+    runtime_config.idle_session_ttl_seconds = idle_ttl
     runtime_config.log_level = log_level
+    runtime_config.progress_notifications = progress_enabled
     logger.set_level(log_level)
     manager.max_sessions = runtime_config.max_sessions
     manager.output_limit_chars = runtime_config.output_limit_chars
     manager.idle_session_ttl_seconds = runtime_config.idle_session_ttl_seconds
+
+    _install_process_cleanup(stdio_transport=args.transport == "stdio")
     if args.transport in HTTP_TRANSPORTS:
         mcp.run(
             transport=args.transport,

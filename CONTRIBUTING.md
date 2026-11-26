@@ -27,9 +27,14 @@ CI does not depend only on host debugger behavior.
 Run the full verification set before submitting:
 
 ```bash
-uv run ruff check .
-uv run pytest --cov=gdb_mcp
-uv build
+make check
+```
+
+If you add, remove, or change any MCP tool signature or docstring, regenerate
+`docs/TOOLS.md`:
+
+```bash
+make tools-doc
 ```
 
 ## Release Prep

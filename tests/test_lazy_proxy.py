@@ -49,9 +49,10 @@ class _FakeToolResult:
 
 
 class _FakeBackend:
-    def __init__(self, result=None, exc=None):
+    def __init__(self, result=None, exc=None, *, enable_progress=False):
         self.result = result or {"content": []}
         self.exc = exc
+        self.enable_progress = enable_progress
         self.calls = []
 
     async def call_tool(self, name, arguments, progress_callback=None):
@@ -70,6 +71,9 @@ class LazyProxyTests(unittest.TestCase):
             "GDB_MCP_MAX_SESSIONS",
             "GDB_MCP_OUTPUT_LIMIT_CHARS",
             "GDB_MCP_TOOL_PROFILE",
+            "GDB_MCP_TOOLS",
+            "GDB_MCP_EXCLUDE_TOOLS",
+            "GDB_MCP_PROGRESS",
             "PYTHONPATH",
         )
         previous = {name: os.environ.get(name) for name in names}
@@ -82,6 +86,9 @@ class LazyProxyTests(unittest.TestCase):
             os.environ["GDB_MCP_MAX_SESSIONS"] = "2"
             os.environ["GDB_MCP_OUTPUT_LIMIT_CHARS"] = "12345"
             os.environ["GDB_MCP_TOOL_PROFILE"] = "core"
+            os.environ["GDB_MCP_TOOLS"] = "gdb_status"
+            os.environ["GDB_MCP_EXCLUDE_TOOLS"] = "gdb_execute"
+            os.environ["GDB_MCP_PROGRESS"] = "1"
             os.environ["PYTHONPATH"] = "/tmp/src"
 
             self.assertEqual(
@@ -91,6 +98,9 @@ class LazyProxyTests(unittest.TestCase):
                     "GDB_MCP_MAX_SESSIONS": "2",
                     "GDB_MCP_OUTPUT_LIMIT_CHARS": "12345",
                     "GDB_MCP_TOOL_PROFILE": "core",
+                    "GDB_MCP_TOOLS": "gdb_status",
+                    "GDB_MCP_EXCLUDE_TOOLS": "gdb_execute",
+                    "GDB_MCP_PROGRESS": "1",
                     "PYTHONPATH": "/tmp/src",
                 },
             )
@@ -266,8 +276,18 @@ class LazyProxyTests(unittest.TestCase):
         async def emit_progress(token, progress, total, message):
             notifications.append((token, progress, total, message))
 
+        suppressed = await _dispatch_jsonrpc(
+            _FakeBackend({"structuredContent": {"ok": True}}, enable_progress=False),
+            b'{"jsonrpc":"2.0","id":8,"method":"tools/call",'
+            b'"params":{"name":"gdb_continue","arguments":{},'
+            b'"_meta":{"progressToken":"outer-progress"}}}',
+            emit_progress=emit_progress,
+        )
+        self.assertEqual(suppressed["result"]["structuredContent"], {"ok": True})
+        self.assertEqual(notifications, [])
+
         response = await _dispatch_jsonrpc(
-            _FakeBackend({"structuredContent": {"ok": True}}),
+            _FakeBackend({"structuredContent": {"ok": True}}, enable_progress=True),
             b'{"jsonrpc":"2.0","id":8,"method":"tools/call",'
             b'"params":{"name":"gdb_continue","arguments":{},'
             b'"_meta":{"progressToken":"outer-progress"}}}',

@@ -12,8 +12,9 @@ import asyncio
 import json
 import os
 import shlex
+import signal
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -25,10 +26,11 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, Tool
 
 from . import __version__
+from .config import _env_bool, _env_positive_float
 from .observability import logger, parse_log_level
 from .prompts import prompt_index, render_prompt
 from .resources import RESOURCE_MIME_TYPE, read_reference_resource, resource_index
-from .tool_profiles import filter_tools, parse_tool_profile
+from .tool_profiles import parse_tool_selection
 
 INSTRUCTIONS = (
     "This is a lazy proxy for gdb-mcp. It exposes gdb-mcp tools immediately, "
@@ -39,13 +41,25 @@ INSTRUCTIONS = (
 )
 
 
-async def list_proxy_tools(profile_value: str | None = None) -> list[Tool]:
-    """Return the full gdb-mcp tool schema without running an MCP transport."""
+async def list_proxy_tools(
+    profile_value: str | None = None,
+    *,
+    include_tools: str | Sequence[str] | None = None,
+    exclude_tools: str | Sequence[str] | None = None,
+    profile_explicit: bool | None = None,
+) -> list[Tool]:
+    """Return the filtered gdb-mcp tool schema without running an MCP transport."""
 
     from .server import mcp
 
     tools = await mcp.list_tools()
-    return filter_tools(tools, parse_tool_profile(profile_value))
+    selection = parse_tool_selection(
+        profile_value,
+        include_tools=include_tools,
+        exclude_tools=exclude_tools,
+        profile_explicit=profile_explicit,
+    )
+    return selection.filter_tools(tools)
 
 
 def list_proxy_resources() -> list[dict[str, Any]]:
@@ -103,6 +117,10 @@ class LazyBackend:
     url: str | None = None
     startup_timeout: float = 30.0
     tool_profile: str = "full"
+    tool_profile_explicit: bool = False
+    include_tools: tuple[str, ...] = ()
+    exclude_tools: tuple[str, ...] = ()
+    enable_progress: bool = False
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _stack: AsyncExitStack | None = None
     _session: ClientSession | None = None
@@ -115,8 +133,15 @@ class LazyBackend:
         command_env = os.getenv("GDB_MCP_BACKEND_COMMAND")
         args_env = os.getenv("GDB_MCP_BACKEND_ARGS")
         cwd = os.getenv("GDB_MCP_BACKEND_CWD")
-        timeout = float(os.getenv("GDB_MCP_BACKEND_STARTUP_TIMEOUT", "30"))
-        profile = parse_tool_profile(os.getenv("GDB_MCP_TOOL_PROFILE", "full"))
+        timeout = _env_positive_float("GDB_MCP_BACKEND_STARTUP_TIMEOUT", 30.0)
+        raw_profile = os.getenv("GDB_MCP_TOOL_PROFILE")
+        selection = parse_tool_selection(
+            raw_profile,
+            include_tools=os.getenv("GDB_MCP_TOOLS"),
+            exclude_tools=os.getenv("GDB_MCP_EXCLUDE_TOOLS"),
+            profile_explicit=bool(raw_profile and raw_profile.strip()),
+        )
+        enable_progress = _env_bool("GDB_MCP_PROGRESS", False)
 
         command: str | None = None
         args: list[str] | None = None
@@ -136,7 +161,11 @@ class LazyBackend:
             cwd=cwd,
             url=url,
             startup_timeout=timeout,
-            tool_profile=profile.canonical_name,
+            tool_profile=selection.profile.canonical_name,
+            tool_profile_explicit=selection.profile_explicit,
+            include_tools=selection.include_tools,
+            exclude_tools=selection.exclude_tools,
+            enable_progress=enable_progress,
         )
 
     async def call_tool(
@@ -204,10 +233,12 @@ class LazyBackend:
             else:
                 if not self.command:
                     raise ValueError("backend command is required when no backend URL is set")
+                child_env = dict(self.env or {})
+                child_env["GDB_MCP_PARENT_PID"] = str(os.getpid())
                 params = StdioServerParameters(
                     command=self.command,
                     args=self.args or [],
-                    env=self.env,
+                    env=child_env,
                     cwd=self.cwd,
                 )
                 read, write = await stack.enter_async_context(stdio_client(params))
@@ -267,8 +298,31 @@ async def _stdio_lifespan(backend: LazyBackend):
 
 async def run_stdio(backend: LazyBackend | None = None) -> None:
     backend = backend or LazyBackend.from_env()
-    async with _stdio_lifespan(backend):
-        await _run_raw_stdio_proxy(backend)
+    loop = asyncio.get_running_loop()
+    proxy_task: asyncio.Task[None] | None = None
+
+    def _on_sigterm() -> None:
+        if proxy_task is not None and not proxy_task.done():
+            proxy_task.cancel()
+
+    sigterm_installed = False
+    if hasattr(signal, "SIGTERM"):
+        try:
+            loop.add_signal_handler(signal.SIGTERM, _on_sigterm)
+            sigterm_installed = True
+        except (NotImplementedError, RuntimeError):
+            pass
+
+    try:
+        async with _stdio_lifespan(backend):
+            proxy_task = asyncio.create_task(_run_raw_stdio_proxy(backend))
+            try:
+                await proxy_task
+            except asyncio.CancelledError:
+                pass
+    finally:
+        if sigterm_installed:
+            loop.remove_signal_handler(signal.SIGTERM)
 
 
 async def _run_raw_stdio_proxy(backend: LazyBackend) -> None:
@@ -316,9 +370,27 @@ async def _run_raw_stdio_proxy(backend: LazyBackend) -> None:
             if current is not None:
                 anonymous_tasks.discard(current)
 
+    loop = asyncio.get_running_loop()
+    stdin_reader: asyncio.StreamReader | None = None
+    stdin_transport: asyncio.ReadTransport | None = None
+    try:
+        reader = asyncio.StreamReader()
+        protocol = asyncio.StreamReaderProtocol(reader)
+        stdin_transport, _ = await loop.connect_read_pipe(
+            lambda: protocol,
+            sys.stdin.buffer,
+        )
+        stdin_reader = reader
+    except (OSError, NotImplementedError, ValueError):
+        stdin_reader = None
+        stdin_transport = None
+
     try:
         while True:
-            line = await asyncio.to_thread(sys.stdin.buffer.readline)
+            if stdin_reader is not None:
+                line = await stdin_reader.readline()
+            else:
+                line = await asyncio.to_thread(sys.stdin.buffer.readline)
             if not line:
                 return
             line = line.strip()
@@ -352,6 +424,8 @@ async def _run_raw_stdio_proxy(backend: LazyBackend) -> None:
             else:
                 anonymous_tasks.add(task)
     finally:
+        if stdin_transport is not None:
+            stdin_transport.close()
         pending = list(in_flight.values()) + list(anonymous_tasks)
         for task in pending:
             if not task.done():
@@ -369,6 +443,10 @@ async def _dispatch_jsonrpc(
 ) -> dict[str, Any] | None:
     try:
         tool_profile = getattr(backend, "tool_profile", "full")
+        tool_profile_explicit = getattr(backend, "tool_profile_explicit", True)
+        include_tools = getattr(backend, "include_tools", ())
+        exclude_tools = getattr(backend, "exclude_tools", ())
+        enable_progress = bool(getattr(backend, "enable_progress", False))
         request = json.loads(raw_request)
         if not isinstance(request, dict):
             raise ValueError("request must be a JSON object")
@@ -393,7 +471,12 @@ async def _dispatch_jsonrpc(
         elif method == "ping":
             result = {}
         elif method == "tools/list":
-            tools = await list_proxy_tools(tool_profile)
+            tools = await list_proxy_tools(
+                tool_profile,
+                include_tools=include_tools,
+                exclude_tools=exclude_tools,
+                profile_explicit=tool_profile_explicit,
+            )
             result = {
                 "tools": [
                     tool.model_dump(mode="json", by_alias=True, exclude_none=True)
@@ -407,14 +490,24 @@ async def _dispatch_jsonrpc(
             arguments = params.get("arguments")
             if arguments is not None and not isinstance(arguments, dict):
                 raise ValueError("tools/call arguments must be an object")
-            visible_names = {tool.name for tool in await list_proxy_tools(tool_profile)}
+            visible_tools = await list_proxy_tools(
+                tool_profile,
+                include_tools=include_tools,
+                exclude_tools=exclude_tools,
+                profile_explicit=tool_profile_explicit,
+            )
+            visible_names = {tool.name for tool in visible_tools}
             if name not in visible_names:
                 raise ValueError(
-                    f"Tool {name!r} is not available in profile {tool_profile!r}"
+                    f"Tool {name!r} is not available in current tool selection"
                 )
             progress_callback = None
             meta = params.get("_meta")
-            if isinstance(meta, dict) and isinstance(meta.get("progressToken"), (str, int)):
+            if (
+                enable_progress
+                and isinstance(meta, dict)
+                and isinstance(meta.get("progressToken"), (str, int))
+            ):
                 if emit_progress is not None:
                     outer_token = meta["progressToken"]
 
@@ -490,10 +583,13 @@ def _backend_subprocess_env() -> dict[str, str] | None:
             "GDB_MCP_MAX_SESSIONS",
             "GDB_MCP_OUTPUT_LIMIT_CHARS",
             "GDB_MCP_TOOL_PROFILE",
+            "GDB_MCP_TOOLS",
+            "GDB_MCP_EXCLUDE_TOOLS",
             "GDB_MCP_IDLE_SESSION_TTL_SECONDS",
             "GDB_MCP_MAX_RECENT_RECORDS",
             "GDB_MCP_MAX_RECENT_COMMANDS",
             "GDB_MCP_LOG_LEVEL",
+            "GDB_MCP_PROGRESS",
             "PYTHONPATH",
         )
         if (value := os.getenv(name)) is not None
@@ -503,6 +599,11 @@ def _backend_subprocess_env() -> dict[str, str] | None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Lazy stdio proxy for gdb-mcp")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "--backend-url",
         default=os.getenv("GDB_MCP_BACKEND_URL"),
@@ -530,16 +631,34 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--startup-timeout",
         type=float,
-        default=float(os.getenv("GDB_MCP_BACKEND_STARTUP_TIMEOUT", "30")),
+        default=None,
         help="Backend startup/connect timeout in seconds",
     )
     parser.add_argument(
         "--tool-profile",
-        default=os.getenv("GDB_MCP_TOOL_PROFILE", "full"),
+        default=None,
         help=(
             "Discovered tools: full (default), core, or "
             "advanced:<group>[,<group>]"
         ),
+    )
+    parser.add_argument(
+        "--tools",
+        action="append",
+        default=None,
+        help="Explicitly expose only (or add to profile) comma-separated tool names",
+    )
+    parser.add_argument(
+        "--exclude-tools",
+        action="append",
+        default=None,
+        help="Comma-separated tool names to exclude after profile and --tools",
+    )
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        default=None,
+        help="Forward MCP notifications/progress on stdio (disabled by default)",
     )
     parser.add_argument(
         "--log-level",
@@ -550,13 +669,44 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    args = parser.parse_args()
     try:
-        profile = parse_tool_profile(args.tool_profile)
+        raw_env_profile = os.getenv("GDB_MCP_TOOL_PROFILE")
+        profile_value = args.tool_profile if args.tool_profile is not None else raw_env_profile
+        profile_explicit = (args.tool_profile is not None) or bool(
+            raw_env_profile and raw_env_profile.strip()
+        )
+        include_tools = (
+            args.tools if args.tools is not None else os.getenv("GDB_MCP_TOOLS")
+        )
+        exclude_tools = (
+            args.exclude_tools
+            if args.exclude_tools is not None
+            else os.getenv("GDB_MCP_EXCLUDE_TOOLS")
+        )
+        selection = parse_tool_selection(
+            profile_value,
+            include_tools=include_tools,
+            exclude_tools=exclude_tools,
+            profile_explicit=profile_explicit,
+        )
+        startup_timeout = (
+            args.startup_timeout
+            if args.startup_timeout is not None
+            else _env_positive_float("GDB_MCP_BACKEND_STARTUP_TIMEOUT", 30.0)
+        )
+        if startup_timeout <= 0:
+            raise ValueError("--startup-timeout must be > 0")
+        enable_progress = (
+            args.progress
+            if args.progress is not None
+            else _env_bool("GDB_MCP_PROGRESS", False)
+        )
         if args.log_level is not None:
             logger.set_level(parse_log_level(args.log_level))
     except ValueError as exc:
-        _build_parser().error(str(exc))
+        parser.error(str(exc))
     if args.backend_command:
         command, command_args = _split_env_command(args.backend_command)
     else:
@@ -566,15 +716,25 @@ def main() -> None:
         command_args.extend(args.backend_arg)
 
     backend_env = _backend_subprocess_env() or {}
-    backend_env["GDB_MCP_TOOL_PROFILE"] = profile.canonical_name
+    backend_env["GDB_MCP_TOOL_PROFILE"] = selection.profile.canonical_name
+    if selection.include_tools:
+        backend_env["GDB_MCP_TOOLS"] = ",".join(selection.include_tools)
+    if selection.exclude_tools:
+        backend_env["GDB_MCP_EXCLUDE_TOOLS"] = ",".join(selection.exclude_tools)
+    if enable_progress:
+        backend_env["GDB_MCP_PROGRESS"] = "1"
     backend = LazyBackend(
         command=command,
         args=command_args,
         env=backend_env,
         cwd=args.backend_cwd,
         url=args.backend_url,
-        startup_timeout=args.startup_timeout,
-        tool_profile=profile.canonical_name,
+        startup_timeout=startup_timeout,
+        tool_profile=selection.profile.canonical_name,
+        tool_profile_explicit=selection.profile_explicit,
+        include_tools=selection.include_tools,
+        exclude_tools=selection.exclude_tools,
+        enable_progress=enable_progress,
     )
     asyncio.run(run_stdio(backend))
 

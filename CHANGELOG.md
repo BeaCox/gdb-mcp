@@ -4,6 +4,49 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-26
+
+### Changed
+
+- **PyPI package rename**: changed `[project].name` to `beacox-gdb-mcp` because
+  `gdb-mcp` on PyPI is occupied by an unrelated project. The CLI commands
+  (`gdb-mcp`, `gdb-mcp-backend`) and Python import package (`gdb_mcp`) are
+  unchanged. Migrate existing installs with `uv tool install beacox-gdb-mcp` or
+  `uvx --from beacox-gdb-mcp gdb-mcp`.
+- Unified Claude plugin, Codex plugin, and metadata manifests around pinned
+  `beacox-gdb-mcp==<version>` `uvx` invocations, and split official MCP
+  Registry metadata (`server.json`, `io.github.beacox/gdb-mcp`) from rich
+  project capability metadata (`gdb-mcp.meta.json`).
+- Added subcommand CLI (`serve`, `serve-http`, `install`, `uninstall`, `config`,
+  `clients`, `doctor`, and hidden `backend`) while keeping deprecated top-level
+  flags and `gdb-mcp-backend` for one release cycle and rejecting mixed
+  lifecycle/server flags.
+- Made invalid `GDB_MCP_*` environment variables fail fast at startup instead of
+  silently falling back to defaults.
+- Disabled `notifications/progress` on stdio by default (`--progress` or
+  `GDB_MCP_PROGRESS=1` to opt in) to prevent client disconnects on fast tool
+  calls.
+- Generated `docs/TOOLS.md` from live `MCPServer` registrations via
+  `scripts/gen_tools_doc.py` and restructured documentation under `docs/`.
+
+### Added
+
+- `--version` on `gdb-mcp`, `gdb-mcp-backend`, and `python -m gdb_mcp.lazy`.
+- `gdb-mcp doctor [--json]` checking Python, GDB features, `gdbserver`, `rr`,
+  `ptrace_scope`, `perf_event_paranoid`, container `CAP_SYS_PTRACE`, and client
+  registrations.
+- `--tools` and `--exclude-tools` flags (plus `GDB_MCP_TOOLS` /
+  `GDB_MCP_EXCLUDE_TOOLS`), `scripts/measure_tools.py`, and
+  `eval_harness.compare_profiles()`.
+- Multi-client `config` and `install` support for Gemini CLI, Cursor, VS Code,
+  and Windsurf alongside Claude Code and Codex.
+- Process-group isolation (`start_new_session=True`, `os.killpg`) and Linux
+  `PR_SET_PDEATHSIG` parent-death cleanup for backend, `gdb`, and `gdbserver`
+  subprocesses.
+- `Dockerfile`, `.dockerignore`, and `flake.nix` packaging, shared `Makefile`
+  CI entry points, and unified SHA-pinned GitHub release + PyPI Trusted
+  Publishing workflow with `checksums.txt` and build provenance attestation.
+
 ## [0.5.0] - 2026-11-26
 
 ### Added

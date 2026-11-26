@@ -9,7 +9,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from gdb_mcp.lazy import list_proxy_tools
-from gdb_mcp.tool_profiles import parse_tool_profile
+from gdb_mcp.tool_profiles import parse_tool_profile, parse_tool_selection
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -106,9 +106,46 @@ class ToolProfileTests(unittest.TestCase):
 
         asyncio.run(check())
 
+    def test_tools_and_exclude_tools_filtering(self) -> None:
+        async def check() -> None:
+            explicit_only = await list_proxy_tools(
+                None,
+                include_tools="gdb_create_session,gdb_status,gdb_close_session",
+                exclude_tools="gdb_status",
+                profile_explicit=False,
+            )
+            self.assertEqual(
+                [tool.name for tool in explicit_only],
+                ["gdb_create_session", "gdb_close_session"],
+            )
+
+            combined = await list_proxy_tools(
+                "core",
+                include_tools="gdb_symbols",
+                exclude_tools="gdb_source,gdb_symbols",
+                profile_explicit=True,
+            )
+            names = {tool.name for tool in combined}
+            self.assertEqual(len(names), 28)
+            self.assertNotIn("gdb_source", names)
+            self.assertNotIn("gdb_symbols", names)
+
+            with self.assertRaisesRegex(ValueError, "Unknown tool name"):
+                await list_proxy_tools("core", include_tools="gdb_does_not_exist")
+
+        asyncio.run(check())
+
     def test_invalid_profile_reports_available_groups(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown groups: missing"):
             parse_tool_profile("advanced:missing")
+
+        selection = parse_tool_selection(
+            "core",
+            include_tools=["gdb_symbols"],
+            exclude_tools="gdb_source",
+        )
+        self.assertEqual(selection.include_tools, ("gdb_symbols",))
+        self.assertEqual(selection.exclude_tools, ("gdb_source",))
 
 
 if __name__ == "__main__":

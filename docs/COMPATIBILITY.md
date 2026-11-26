@@ -47,14 +47,16 @@ sudo apt-get install -y gcc gdb gdbserver
 sudo apt-get install -y rr
 ```
 
-Nix is useful for repeatable debugger dependencies, but this repository does
-not maintain a flake or Nix package yet. Use an ad hoc shell when needed:
+A maintained [flake.nix](../flake.nix) provides a wrapped `gdb-mcp` package with
+`gdb` and `binutils` on `PATH` (`nix run github:BeaCox/gdb-mcp`), or an ad hoc
+shell can be used:
 
 ```bash
 nix shell nixpkgs#gdb nixpkgs#gdbserver nixpkgs#gcc
 ```
 
 Homebrew packaging is not maintained yet. Linux users should prefer distro
-packages or the Nix shell above for native debugger dependencies. Python
-installation remains through PyPI, `pipx`, `uvx`, or the tagged Git source
-documented in [README.md](../README.md).
+packages, the OCI [Dockerfile](../Dockerfile), or the Nix flake above for
+native debugger dependencies. Python installation uses `beacox-gdb-mcp` from
+PyPI (`uv tool install`, `uvx`, `pipx`) or tagged Git as documented in
+[INSTALL.md](INSTALL.md).

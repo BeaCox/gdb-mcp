@@ -41,7 +41,7 @@ body:
     id: version
     attributes:
       label: gdb-mcp version or commit
-      placeholder: "0.2.0 or commit SHA"
+      placeholder: "gdb-mcp --version"
     validations:
       required: true
   - type: input
@@ -55,9 +55,15 @@ body:
     id: os
     attributes:
       label: Linux distribution and kernel
-      placeholder: "Ubuntu 22.04, Linux 6.8"
+      placeholder: "Ubuntu 24.04, Linux 6.8"
     validations:
       required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Environment check (gdb-mcp doctor --json)
+      description: Output of `gdb-mcp doctor --json` if available.
+      render: json
   - type: textarea
     id: logs
     attributes:

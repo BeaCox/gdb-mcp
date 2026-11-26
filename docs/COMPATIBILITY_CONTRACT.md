@@ -35,8 +35,8 @@ explicitly approved for a major or pre-1.0 minor deprecation cycle:
 Before removing or incompatibly changing a public tool, parameter, or response
 field:
 
-1. Mark the item as deprecated in `TOOLS.md` and `CHANGELOG.md` for **at least
-   one minor release** before removal.
+1. Mark the item as deprecated in `docs/TOOLS.md` and `CHANGELOG.md` for **at
+   least one minor release** before removal.
 2. Provide a non-breaking migration path (for example, keeping an additive alias
    or legacy flag such as `include_raw` alongside `output`).
 3. Verify the contract diff with `python scripts/check_mcp_contract.py --check`.

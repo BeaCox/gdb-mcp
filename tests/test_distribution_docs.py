@@ -17,17 +17,43 @@ def project_version() -> str:
 
 
 class DistributionDocsTests(unittest.TestCase):
-    def test_server_registry_metadata_is_machine_readable(self) -> None:
+    def test_official_server_json_follows_mcp_registry_schema(self) -> None:
         version = project_version()
-        metadata = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+        manifest = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            manifest["$schema"],
+            "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        )
+        self.assertEqual(manifest["name"], "io.github.beacox/gdb-mcp")
+        self.assertEqual(manifest["version"], version)
+        pkg = manifest["packages"][0]
+        self.assertEqual(pkg["registryType"], "pypi")
+        self.assertEqual(pkg["identifier"], "beacox-gdb-mcp")
+        self.assertEqual(pkg["version"], version)
+        self.assertEqual(pkg["transport"]["type"], "stdio")
+
+    def test_meta_manifest_is_machine_readable(self) -> None:
+        version = project_version()
+        metadata = json.loads((ROOT / "gdb-mcp.meta.json").read_text(encoding="utf-8"))
 
         self.assertEqual(metadata["name"], "gdb-mcp")
+        self.assertEqual(metadata["distribution"], "beacox-gdb-mcp")
         self.assertEqual(metadata["version"], version)
         self.assertEqual(metadata["transport"]["type"], "stdio")
         self.assertEqual(metadata["mcpServers"]["gdb"]["command"], "uvx")
-        self.assertEqual(metadata["mcpServers"]["gdb"]["args"], ["gdb-mcp"])
-        self.assertEqual(metadata["install"]["pypi"]["args"], ["gdb-mcp"])
-        self.assertEqual(metadata["install"]["pipx"]["args"], ["install", "gdb-mcp"])
+        self.assertEqual(
+            metadata["mcpServers"]["gdb"]["args"],
+            ["--from", f"beacox-gdb-mcp=={version}", "gdb-mcp"],
+        )
+        self.assertEqual(
+            metadata["install"]["uvTool"]["args"],
+            ["tool", "install", "beacox-gdb-mcp"],
+        )
+        self.assertEqual(
+            metadata["install"]["pipx"]["args"],
+            ["install", "beacox-gdb-mcp"],
+        )
         self.assertIn(
             f"git+https://github.com/BeaCox/gdb-mcp.git@v{version}",
             metadata["install"]["taggedGit"]["args"],
@@ -40,17 +66,60 @@ class DistributionDocsTests(unittest.TestCase):
         )
         self.assertEqual(len(metadata["capabilities"]["prompts"]), 4)
 
-    def test_readme_documents_pypi_and_tagged_git_installs(self) -> None:
-        version = project_version()
+    def test_readme_uses_beacox_gdb_mcp_and_documents_verification(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn("uvx gdb-mcp", readme)
-        self.assertIn("pipx install gdb-mcp", readme)
+        self.assertIn("<!-- mcp-name: io.github.beacox/gdb-mcp -->", readme)
+        self.assertIn("uv tool install beacox-gdb-mcp", readme)
+        self.assertIn("gdb-mcp --version", readme)
+        self.assertIn("gdb-mcp doctor", readme)
+        self.assertIn("kernel.yama.ptrace_scope=0", readme)
+        self.assertIn("kernel.perf_event_paranoid=1", readme)
+        self.assertIn("docs/INSTALL.md", readme)
+        self.assertIn("docs/TOOLS.md", readme)
+        self.assertIn("docs/TRANSPORTS.md", readme)
+        self.assertNotIn("uvx gdb-mcp", readme)
+        self.assertNotIn("pipx install gdb-mcp", readme)
+        self.assertLessEqual(len(readme.splitlines()), 230)
+
+    def test_docs_structure_and_packaging_files_exist(self) -> None:
+        version = project_version()
+        install_doc = (ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
+        transports_doc = (ROOT / "docs" / "TRANSPORTS.md").read_text(encoding="utf-8")
+        testing_doc = (ROOT / "docs" / "TESTING.md").read_text(encoding="utf-8")
+        index_doc = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("uv tool install beacox-gdb-mcp", install_doc)
+        self.assertIn("pipx install beacox-gdb-mcp", install_doc)
         self.assertIn(
             f"uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v{version} gdb-mcp",
-            readme,
+            install_doc,
         )
-        self.assertIn("[server.json](server.json)", readme)
+        self.assertIn("--cap-add=SYS_PTRACE", install_doc)
+        self.assertIn("nix run github:BeaCox/gdb-mcp", install_doc)
+        self.assertIn("Shutdown Semantics", transports_doc)
+        self.assertIn("GDB_MCP_PROGRESS", transports_doc)
+        self.assertIn("make check", testing_doc)
+        self.assertIn("TOOLS.md", index_doc)
+        self.assertTrue((ROOT / "Dockerfile").exists())
+        self.assertTrue((ROOT / "flake.nix").exists())
+        self.assertFalse((ROOT / "TOOLS.md").exists())
+
+    def test_workflows_pin_actions_by_sha_and_unify_release(self) -> None:
+        ci_text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        release_text = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertFalse((ROOT / ".github" / "workflows" / "publish.yml").exists())
+        self.assertIn("make check", ci_text)
+        for text in (ci_text, release_text):
+            uses_refs = re.findall(r"uses:\s*([^\s]+)", text)
+            self.assertTrue(uses_refs)
+            for ref in uses_refs:
+                self.assertRegex(ref, r"@[0-9a-f]{40}$", ref)
+        self.assertIn("checksums.txt", release_text)
+        self.assertIn("attest-build-provenance", release_text)
+        self.assertIn("gh-action-pypi-publish", release_text)
 
     def test_cookbook_workflows_document_security_tradeoffs(self) -> None:
         workflows = (ROOT / "docs" / "WORKFLOWS.md").read_text(encoding="utf-8")

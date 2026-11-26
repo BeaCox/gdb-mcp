@@ -258,11 +258,25 @@ class ServerContractTests(unittest.TestCase):
 
     def test_tools_reference_covers_public_mcp_tools(self) -> None:
         tools = asyncio.run(self._tool_names())
-        reference = Path(__file__).resolve().parents[1] / "TOOLS.md"
+        root = Path(__file__).resolve().parents[1]
+        reference = root / "docs" / "TOOLS.md"
         documented = set(
             re.findall(r"`(gdb_[A-Za-z0-9_]+)`", reference.read_text(encoding="utf-8"))
         )
         self.assertEqual(sorted(tools - documented), [])
+
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, str(root / "scripts" / "gen_tools_doc.py"), "--check"],
+            cwd=root,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
 
     async def _tool_names(self) -> set[str]:
         return {tool.name for tool in await mcp.list_tools()}
@@ -441,13 +455,18 @@ class ServerContractTests(unittest.TestCase):
         fake_rr = Path(__file__).parent / "fixtures" / "fake_rr.py"
         fake_rr.chmod(0o755)
         recorder = ProgressRecorder()
-        with tempfile.TemporaryDirectory() as directory:
-            result = await gdb_rr_record(
-                program="/tmp/progress-sample",
-                rr_path=str(fake_rr),
-                trace_dir=str(Path(directory) / "trace"),
-                context=recorder,
-            )
+        previous_progress = runtime_config.progress_notifications
+        runtime_config.progress_notifications = True
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                result = await gdb_rr_record(
+                    program="/tmp/progress-sample",
+                    rr_path=str(fake_rr),
+                    trace_dir=str(Path(directory) / "trace"),
+                    context=recorder,
+                )
+        finally:
+            runtime_config.progress_notifications = previous_progress
 
         self.assertTrue(result["ok"], result)
         self.assertEqual([event[0] for event in recorder.events], [0, 50, 100])
@@ -475,22 +494,27 @@ class ServerContractTests(unittest.TestCase):
         fake_rr = Path(__file__).parent / "fixtures" / "fake_rr.py"
         fake_rr.chmod(0o755)
         recorder = ProgressRecorder()
-        with tempfile.TemporaryDirectory() as directory, patch.dict(
-            os.environ,
-            {"FAKE_RR_DELAY": "1"},
-        ):
-            task = asyncio.create_task(
-                gdb_rr_record(
-                    program="/tmp/progress-sample",
-                    rr_path=str(fake_rr),
-                    trace_dir=str(Path(directory) / "trace"),
-                    context=recorder,
+        previous_progress = runtime_config.progress_notifications
+        runtime_config.progress_notifications = True
+        try:
+            with tempfile.TemporaryDirectory() as directory, patch.dict(
+                os.environ,
+                {"FAKE_RR_DELAY": "1"},
+            ):
+                task = asyncio.create_task(
+                    gdb_rr_record(
+                        program="/tmp/progress-sample",
+                        rr_path=str(fake_rr),
+                        trace_dir=str(Path(directory) / "trace"),
+                        context=recorder,
+                    )
                 )
-            )
-            await asyncio.wait_for(recorder.dispatched.wait(), timeout=1.0)
-            task.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await task
+                await asyncio.wait_for(recorder.dispatched.wait(), timeout=1.0)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+        finally:
+            runtime_config.progress_notifications = previous_progress
 
         self.assertEqual(recorder.events, [0, 50])
 

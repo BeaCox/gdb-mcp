@@ -10,17 +10,23 @@ cc -g -gdwarf-4 -O0 examples/hello.c -o /tmp/gdb-mcp-hello
 
 ## Configure the MCP Server
 
-From a checkout:
+From an installed wheel (`uv tool install beacox-gdb-mcp`):
 
 ```bash
-codex mcp add gdb -- uv run gdb-mcp
+codex mcp add gdb -- gdb-mcp
+```
+
+From PyPI via `uvx`:
+
+```bash
+codex mcp add gdb -- uvx --from beacox-gdb-mcp gdb-mcp
 ```
 
 From Git:
 
 ```bash
 codex mcp add gdb -- \
-  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.5.0 gdb-mcp
+  uvx --from git+https://github.com/BeaCox/gdb-mcp.git@v0.6.0 gdb-mcp
 ```
 
 `gdb-mcp` is the client-facing lazy stdio proxy. The MCP client discovers tools

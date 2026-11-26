@@ -11,6 +11,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import ToolAnnotations
 
 from ..mi import c_escape
+from ..process import terminate_process_group
 from ..responses import error_response
 from ..session import (
     GdbMcpError,
@@ -133,12 +134,7 @@ async def _apply_profile_command(
 async def _terminate_process(process: asyncio.subprocess.Process | None) -> None:
     if process is None or process.returncode is not None:
         return
-    process.terminate()
-    try:
-        await asyncio.wait_for(process.wait(), timeout=2.0)
-    except asyncio.TimeoutError:
-        process.kill()
-        await process.wait()
+    await terminate_process_group(process, process.pid, timeout=2.0)
 
 
 async def gdb_create_session(
@@ -451,6 +447,7 @@ async def gdb_launch_gdbserver(
             startup_timeout=timeout,
         )
         session.gdbserver_process = gdbserver_process
+        session.gdbserver_pgid = gdbserver_process.pid
         session.gdbserver_drain_task = drain_task
         target = target_endpoint or gdbserver_target_endpoint(listen, banner)
         await report_progress(context, 70, "Connecting GDB to gdbserver")

@@ -20,6 +20,11 @@ from anyio import CancelScope
 
 from .mi import MIParseError, MIRecord, c_escape, parse_mi_record, quote_cli_command
 from .observability import logger
+from .process import (
+    subprocess_group_kwargs,
+    terminate_process_group,
+    terminate_process_group_sync,
+)
 
 GDB_STREAM_LIMIT_BYTES = 4 * 1024 * 1024
 MAX_GDB_LINE_BYTES = 16 * 1024 * 1024
@@ -308,7 +313,9 @@ class GdbSession:
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: float = field(default_factory=_wall_time)
     process: asyncio.subprocess.Process | None = None
+    gdb_pgid: int | None = None
     gdbserver_process: asyncio.subprocess.Process | None = None
+    gdbserver_pgid: int | None = None
     gdbserver_drain_task: asyncio.Task[None] | None = None
     gdbserver_endpoint: str | None = None
     last_stop: dict[str, Any] | None = None
@@ -372,7 +379,9 @@ class GdbSession:
                 cwd=self.cwd,
                 env=env,
                 limit=GDB_STREAM_LIMIT_BYTES,
+                **subprocess_group_kwargs(),
             )
+            self.gdb_pgid = self.process.pid
             self._reader_task = asyncio.create_task(
                 self._reader_loop(),
                 name=f"gdb-reader-{self.session_id}",
@@ -492,12 +501,7 @@ class GdbSession:
                     except Exception:
                         pass
                 if process.returncode is None:
-                    process.terminate()
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=2.0)
-                    except asyncio.TimeoutError:
-                        process.kill()
-                        await process.wait()
+                    await terminate_process_group(process, self.gdb_pgid, timeout=2.0)
 
             if self._reader_task is not None:
                 if not self._reader_task.done():
@@ -511,12 +515,11 @@ class GdbSession:
             if self.gdbserver_drain_task is not None:
                 self.gdbserver_drain_task.cancel()
             if self.gdbserver_process is not None and self.gdbserver_process.returncode is None:
-                self.gdbserver_process.terminate()
-                try:
-                    await asyncio.wait_for(self.gdbserver_process.wait(), timeout=2.0)
-                except asyncio.TimeoutError:
-                    self.gdbserver_process.kill()
-                    await self.gdbserver_process.wait()
+                await terminate_process_group(
+                    self.gdbserver_process,
+                    self.gdbserver_pgid,
+                    timeout=2.0,
+                )
             if self.gdbserver_drain_task is not None:
                 try:
                     await self.gdbserver_drain_task
@@ -1172,6 +1175,22 @@ class SessionManager:
             return_exceptions=True,
         )
 
+    def terminate_all_sync(self) -> None:
+        """Best-effort synchronous cleanup of all spawned debugger process groups."""
+
+        sessions = list(self._sessions.values())
+        for session in sessions:
+            if session.process is not None and session.process.returncode is None:
+                terminate_process_group_sync(session.gdb_pgid, session.process.pid)
+            if (
+                session.gdbserver_process is not None
+                and session.gdbserver_process.returncode is None
+            ):
+                terminate_process_group_sync(
+                    session.gdbserver_pgid,
+                    session.gdbserver_process.pid,
+                )
+
 
 async def launch_gdbserver(
     *,
@@ -1194,6 +1213,7 @@ async def launch_gdbserver(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         cwd=cwd,
+        **subprocess_group_kwargs(),
     )
 
     output: list[str] = []
@@ -1226,12 +1246,7 @@ async def launch_gdbserver(
         )
     except BaseException:
         if process.returncode is None:
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
+            await terminate_process_group(process, process.pid, timeout=2.0)
         raise
 
 

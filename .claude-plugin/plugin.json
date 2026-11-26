@@ -1,6 +1,6 @@
 {
   "name": "gdb-mcp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Multi-session GDB and gdbserver debugging through MCP.",
   "author": {
     "name": "BeaCox",
@@ -17,11 +17,10 @@
   ],
   "mcpServers": {
     "gdb": {
-      "command": "uv",
+      "command": "uvx",
       "args": [
-        "run",
-        "--project",
-        "${CLAUDE_PLUGIN_ROOT}",
+        "--from",
+        "beacox-gdb-mcp==0.6.0",
         "gdb-mcp"
       ]
     }

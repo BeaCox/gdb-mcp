@@ -9,17 +9,27 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from . import __version__
 
-ClientName = Literal["claude", "codex"]
+ClientName = Literal["claude", "codex", "gemini"]
+ConfigClientName = Literal[
+    "claude",
+    "claude_code",
+    "codex",
+    "gemini",
+    "cursor",
+    "vscode",
+    "windsurf",
+]
 
 MARKETPLACE_SOURCE = "BeaCox/gdb-mcp"
 MARKETPLACE_NAME = "beacox"
 PLUGIN_NAME = "gdb-mcp"
 MCP_SERVER_NAME = "gdb"
-PYPI_PACKAGE_NAME = "gdb-mcp"
+PYPI_PACKAGE_NAME = "beacox-gdb-mcp"
+CONFLICTING_PYPI_PACKAGE_NAME = "gdb-mcp"
 
 
 class CommandFailed(RuntimeError):
@@ -62,7 +72,8 @@ def _release_tag() -> str:
 
 
 RELEASE_TAG = _release_tag()
-PACKAGE_SOURCE = f"git+https://github.com/BeaCox/gdb-mcp.git@{RELEASE_TAG}"
+PACKAGE_SOURCE = PYPI_PACKAGE_NAME
+TAGGED_GIT_SOURCE = f"git+https://github.com/BeaCox/gdb-mcp.git@{RELEASE_TAG}"
 
 
 @dataclass(frozen=True)
@@ -76,9 +87,18 @@ class ClientInfo:
     direct_mcp_uninstall: list[str]
 
 
-def _uvx_server_command(package_source: str = PACKAGE_SOURCE) -> list[str]:
-    if package_source == PYPI_PACKAGE_NAME:
-        return ["uvx", PYPI_PACKAGE_NAME]
+def _uvx_server_command(
+    package_source: str = PACKAGE_SOURCE,
+    *,
+    installed: bool = False,
+) -> list[str]:
+    if installed:
+        return ["gdb-mcp"]
+    if package_source == CONFLICTING_PYPI_PACKAGE_NAME:
+        raise ValueError(
+            "PyPI package 'gdb-mcp' belongs to another project; "
+            f"use {PYPI_PACKAGE_NAME!r} or a git+ URL"
+        )
     return ["uvx", "--from", package_source, "gdb-mcp"]
 
 
@@ -87,8 +107,9 @@ def client_info(
     *,
     scope: str = "user",
     package_source: str = PACKAGE_SOURCE,
+    installed: bool = False,
 ) -> ClientInfo:
-    server_command = _uvx_server_command(package_source)
+    server_command = _uvx_server_command(package_source, installed=installed)
     if name == "claude":
         command = shutil.which("claude") or "claude"
         return ClientInfo(
@@ -171,13 +192,36 @@ def client_info(
                 MCP_SERVER_NAME,
             ],
         )
+    if name == "gemini":
+        command = shutil.which("gemini") or "gemini"
+        return ClientInfo(
+            name=name,
+            command=command,
+            available=shutil.which("gemini") is not None,
+            plugin_install=[],
+            plugin_uninstall=[],
+            direct_mcp_install=[
+                command,
+                "mcp",
+                "add",
+                MCP_SERVER_NAME,
+                "--",
+                *server_command,
+            ],
+            direct_mcp_uninstall=[
+                command,
+                "mcp",
+                "remove",
+                MCP_SERVER_NAME,
+            ],
+        )
     raise ValueError(f"Unsupported client: {name}")
 
 
 def detect_clients() -> list[ClientName]:
     return [
         name
-        for name in ("claude", "codex")
+        for name in ("claude", "codex", "gemini")
         if client_info(name).available
     ]
 
@@ -186,14 +230,18 @@ def parse_targets(value: str | None) -> list[ClientName]:
     if value is None or not value.strip() or value.strip() == "auto":
         detected = detect_clients()
         if not detected:
-            raise RuntimeError("No supported clients found. Install Claude Code or Codex first.")
+            raise RuntimeError(
+                "No supported clients found. Install Claude Code, Codex, or Gemini CLI first."
+            )
         return detected
 
     targets: list[ClientName] = []
     for raw in value.split(","):
         name = raw.strip().lower()
-        if name not in {"claude", "codex"}:
-            raise ValueError(f"Unsupported client {name!r}; choose claude, codex, or auto")
+        if name not in {"claude", "codex", "gemini"}:
+            raise ValueError(
+                f"Unsupported client {name!r}; choose claude, codex, gemini, or auto"
+            )
         if name not in targets:
             targets.append(name)  # type: ignore[arg-type]
     return targets
@@ -255,13 +303,19 @@ def install(
     direct: bool = False,
     dry_run: bool = False,
     package_source: str = PACKAGE_SOURCE,
+    installed: bool = False,
 ) -> None:
     for target in targets:
-        info = client_info(target, scope=scope, package_source=package_source)
+        info = client_info(
+            target,
+            scope=scope,
+            package_source=package_source,
+            installed=installed,
+        )
         if not info.available and not dry_run:
             raise RuntimeError(f"{target} executable was not found")
         print(f"Installing gdb-mcp for {target}...")
-        if direct:
+        if direct or not info.plugin_install:
             _run(info.direct_mcp_install, dry_run=dry_run)
             continue
         for index, command in enumerate(info.plugin_install):
@@ -291,39 +345,89 @@ def uninstall(
         if not info.available and not dry_run:
             raise RuntimeError(f"{target} executable was not found")
         print(f"Uninstalling gdb-mcp from {target}...")
-        if direct:
+        if direct or not info.plugin_uninstall:
             _run(info.direct_mcp_uninstall, dry_run=dry_run)
             continue
         for command in info.plugin_uninstall:
             _run(command, dry_run=dry_run)
 
 
-def configuration(package_source: str = PACKAGE_SOURCE) -> dict[str, object]:
-    server_command = _uvx_server_command(package_source)
-    server = {
+def configuration(
+    package_source: str = PACKAGE_SOURCE,
+    *,
+    client: str | None = None,
+    installed: bool = False,
+) -> dict[str, Any]:
+    server_command = _uvx_server_command(package_source, installed=installed)
+    server: dict[str, Any] = {
         "command": server_command[0],
         "args": server_command[1:],
     }
-    return {
+    all_configs: dict[str, dict[str, Any]] = {
         "claude_code": {
             "mcpServers": {
-                MCP_SERVER_NAME: server,
+                MCP_SERVER_NAME: dict(server),
             }
         },
         "codex": {
             "mcp_servers": {
-                MCP_SERVER_NAME: server,
+                MCP_SERVER_NAME: dict(server),
+            }
+        },
+        "gemini": {
+            "mcpServers": {
+                MCP_SERVER_NAME: dict(server),
+            }
+        },
+        "cursor": {
+            "mcpServers": {
+                MCP_SERVER_NAME: dict(server),
+            }
+        },
+        "vscode": {
+            "servers": {
+                MCP_SERVER_NAME: {
+                    "type": "stdio",
+                    **server,
+                }
+            }
+        },
+        "windsurf": {
+            "mcpServers": {
+                MCP_SERVER_NAME: dict(server),
             }
         },
     }
+    if client is None:
+        return all_configs
+
+    normalized = client.strip().lower().replace("-", "_")
+    if normalized == "claude":
+        normalized = "claude_code"
+    if normalized not in all_configs:
+        raise ValueError(
+            f"Unsupported config client {client!r}; choose one of: "
+            "claude, codex, gemini, cursor, vscode, windsurf"
+        )
+    return all_configs[normalized]
 
 
-def print_configuration(package_source: str = PACKAGE_SOURCE) -> None:
-    print(json.dumps(configuration(package_source), indent=2))
+def print_configuration(
+    package_source: str = PACKAGE_SOURCE,
+    *,
+    client: str | None = None,
+    installed: bool = False,
+) -> None:
+    print(
+        json.dumps(
+            configuration(package_source, client=client, installed=installed),
+            indent=2,
+        )
+    )
 
 
 def list_clients() -> None:
-    for name in ("claude", "codex"):
+    for name in ("claude", "codex", "gemini"):
         info = client_info(name)
         status = "available" if info.available else "not found"
         print(f"{name}: {status}")

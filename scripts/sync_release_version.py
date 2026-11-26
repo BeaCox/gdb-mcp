@@ -15,6 +15,8 @@ PROJECT_VERSION_RE = re.compile(r'(?m)^version\s*=\s*"(?P<version>[^"]+)"\s*$')
 RELEASE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 TAG_RE = r"v\d+\.\d+\.\d+"
 PACKAGE_SOURCE_PREFIX = "git+https://github.com/BeaCox/gdb-mcp.git@"
+PYPI_DIST_NAME = "beacox-gdb-mcp"
+PINNED_DIST_RE = re.compile(rf"{re.escape(PYPI_DIST_NAME)}==\d+\.\d+\.\d+")
 
 
 def root_from_script() -> Path:
@@ -56,6 +58,8 @@ def sync_text_file(
     check: bool,
 ) -> list[str]:
     path = root / relative
+    if not path.exists():
+        return []
     text = path.read_text(encoding="utf-8")
     next_text = transform(text)
     if next_text == text:
@@ -92,7 +96,8 @@ def replace_release_tags(text: str, version: str) -> str:
         text,
     )
     text = re.sub(rf"(BeaCox/gdb-mcp@){TAG_RE}", rf"\g<1>{tag}", text)
-    return re.sub(rf"(--ref\s+){TAG_RE}", rf"\g<1>{tag}", text)
+    text = re.sub(rf"(--ref\s+){TAG_RE}", rf"\g<1>{tag}", text)
+    return PINNED_DIST_RE.sub(f"{PYPI_DIST_NAME}=={version}", text)
 
 
 def set_manifest_version(version: str) -> Callable[[dict[str, Any]], None]:
@@ -104,31 +109,101 @@ def set_manifest_version(version: str) -> Callable[[dict[str, Any]], None]:
     return transform
 
 
-def set_mcp_package_source(version: str) -> Callable[[dict[str, Any]], None]:
+def _update_pinned_dist_args(args: list[Any], version: str, location: str) -> None:
+    expected = f"{PYPI_DIST_NAME}=={version}"
+    for index, value in enumerate(args):
+        if isinstance(value, str) and value.startswith(f"{PYPI_DIST_NAME}=="):
+            args[index] = expected
+            return
+    raise ValueError(f"{location} is missing pinned {PYPI_DIST_NAME}==<version>")
+
+
+def set_plugin_manifest_version_and_source(version: str) -> Callable[[dict[str, Any]], None]:
     def transform(data: dict[str, Any]) -> None:
+        if "version" not in data:
+            raise ValueError("plugin manifest is missing version")
+        data["version"] = version
         args = data["mcpServers"]["gdb"]["args"]
-        expected = f"{PACKAGE_SOURCE_PREFIX}v{version}"
-        for index, value in enumerate(args):
-            if isinstance(value, str) and value.startswith(PACKAGE_SOURCE_PREFIX):
-                args[index] = expected
-                return
-        raise ValueError("plugins/gdb-mcp/.mcp.json is missing the package source")
+        _update_pinned_dist_args(args, version, ".claude-plugin/plugin.json")
 
     return transform
 
 
-def set_server_metadata(version: str) -> Callable[[dict[str, Any]], None]:
+def set_mcp_package_source(version: str) -> Callable[[dict[str, Any]], None]:
+    def transform(data: dict[str, Any]) -> None:
+        args = data["mcpServers"]["gdb"]["args"]
+        _update_pinned_dist_args(args, version, "plugins/gdb-mcp/.mcp.json")
+
+    return transform
+
+
+def set_meta_metadata(version: str) -> Callable[[dict[str, Any]], None]:
     def transform(data: dict[str, Any]) -> None:
         if "version" not in data:
-            raise ValueError("server.json is missing version")
+            raise ValueError("gdb-mcp.meta.json is missing version")
         data["version"] = version
+        _update_pinned_dist_args(
+            data["install"]["pypi"]["args"],
+            version,
+            "gdb-mcp.meta.json install.pypi",
+        )
+        _update_pinned_dist_args(
+            data["mcpServers"]["gdb"]["args"],
+            version,
+            "gdb-mcp.meta.json mcpServers.gdb",
+        )
         args = data["install"]["taggedGit"]["args"]
         expected = f"{PACKAGE_SOURCE_PREFIX}v{version}"
         for index, value in enumerate(args):
             if isinstance(value, str) and value.startswith(PACKAGE_SOURCE_PREFIX):
                 args[index] = expected
                 return
-        raise ValueError("server.json is missing tagged Git package source")
+        raise ValueError("gdb-mcp.meta.json is missing tagged Git package source")
+
+    return transform
+
+
+def set_server_registry_metadata(version: str) -> Callable[[dict[str, Any]], None]:
+    def transform(data: dict[str, Any]) -> None:
+        if "version" not in data:
+            raise ValueError("server.json is missing version")
+        data["version"] = version
+        packages = data.get("packages") or []
+        updated = False
+        for pkg in packages:
+            if (
+                isinstance(pkg, dict)
+                and pkg.get("registryType") == "pypi"
+                and pkg.get("identifier") == PYPI_DIST_NAME
+            ):
+                pkg["version"] = version
+                updated = True
+        if not updated:
+            raise ValueError("server.json is missing pypi package entry for beacox-gdb-mcp")
+
+    return transform
+
+
+def set_flake_version(version: str) -> Callable[[str], str]:
+    def transform(text: str) -> str:
+        return re.sub(
+            r'(?m)^(\s*version\s*=\s*")\d+\.\d+\.\d+(";)$',
+            rf"\g<1>{version}\g<2>",
+            text,
+            count=1,
+        )
+
+    return transform
+
+
+def set_todo_released_version(version: str) -> Callable[[str], str]:
+    def transform(text: str) -> str:
+        return re.sub(
+            r"(Current released version:\s*`)\d+\.\d+\.\d+(`)",
+            rf"\g<1>{version}\g<2>",
+            text,
+            count=1,
+        )
 
     return transform
 
@@ -146,7 +221,7 @@ def lockfile_project_version(root: Path) -> str | None:
     text = path.read_text(encoding="utf-8")
     for match in re.finditer(r"(?ms)^\[\[package\]\]\n(?P<body>.*?)(?=^\[\[package\]\]|\Z)", text):
         body = match.group("body")
-        if re.search(r'(?m)^name = "gdb-mcp"$', body):
+        if re.search(rf'(?m)^name = "{re.escape(PYPI_DIST_NAME)}"$', body):
             version_match = re.search(r'(?m)^version = "(?P<version>[^"]+)"$', body)
             return version_match.group("version") if version_match is not None else None
     return None
@@ -161,7 +236,7 @@ def sync_release_version(root: Path, version: str, *, check: bool) -> tuple[list
     else:
         changed.extend(set_project_version(root, version, check=check))
 
-    for relative in ("README.md", "examples/README.md"):
+    for relative in ("README.md", "docs/INSTALL.md", "examples/README.md"):
         changed.extend(
             sync_text_file(
                 root,
@@ -171,12 +246,22 @@ def sync_release_version(root: Path, version: str, *, check: bool) -> tuple[list
             )
         )
 
-    for relative in (
-        ".claude-plugin/plugin.json",
-        "plugins/gdb-mcp/.codex-plugin/plugin.json",
-    ):
-        changed.extend(sync_json_file(root, relative, set_manifest_version(version), check=check))
-
+    changed.extend(
+        sync_json_file(
+            root,
+            ".claude-plugin/plugin.json",
+            set_plugin_manifest_version_and_source(version),
+            check=check,
+        )
+    )
+    changed.extend(
+        sync_json_file(
+            root,
+            "plugins/gdb-mcp/.codex-plugin/plugin.json",
+            set_manifest_version(version),
+            check=check,
+        )
+    )
     changed.extend(
         sync_json_file(
             root,
@@ -185,7 +270,18 @@ def sync_release_version(root: Path, version: str, *, check: bool) -> tuple[list
             check=check,
         )
     )
-    changed.extend(sync_json_file(root, "server.json", set_server_metadata(version), check=check))
+    changed.extend(
+        sync_json_file(root, "gdb-mcp.meta.json", set_meta_metadata(version), check=check)
+    )
+    changed.extend(
+        sync_json_file(root, "server.json", set_server_registry_metadata(version), check=check)
+    )
+    changed.extend(
+        sync_text_file(root, "flake.nix", set_flake_version(version), check=check)
+    )
+    changed.extend(
+        sync_text_file(root, "TODO.md", set_todo_released_version(version), check=check)
+    )
 
     changelog_version = latest_changelog_version(root)
     if changelog_version != version:
@@ -197,7 +293,8 @@ def sync_release_version(root: Path, version: str, *, check: bool) -> tuple[list
     lock_version = lockfile_project_version(root)
     if lock_version != version:
         problems.append(
-            f"uv.lock has gdb-mcp {lock_version or 'missing'}, expected {version}; run uv lock"
+            f"uv.lock has {PYPI_DIST_NAME} {lock_version or 'missing'}, "
+            f"expected {version}; run uv lock"
         )
 
     if check:

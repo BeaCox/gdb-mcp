@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -160,14 +161,99 @@ def parse_tool_profile(value: str | None) -> ToolProfile:
     return ToolProfile("advanced", groups)
 
 
-def filter_tools(tools: list[Tool], profile: ToolProfile) -> list[Tool]:
+def parse_tool_names(values: str | Sequence[str] | None) -> tuple[str, ...]:
+    """Parse comma-separated or repeated tool names in stable order."""
+
+    if values is None:
+        return ()
+    raw_items = [values] if isinstance(values, str) else list(values)
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_items:
+        for part in raw.split(","):
+            name = part.strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+    return tuple(names)
+
+
+@dataclass(frozen=True)
+class ToolSelection:
+    """Validated tool selection combining a profile, --tools, and --exclude-tools."""
+
+    profile: ToolProfile
+    profile_explicit: bool = False
+    include_tools: tuple[str, ...] = ()
+    exclude_tools: tuple[str, ...] = ()
+
+    @property
+    def canonical_name(self) -> str:
+        if not self.include_tools and not self.exclude_tools:
+            return self.profile.canonical_name
+        parts: list[str] = []
+        if self.profile_explicit or not self.include_tools:
+            parts.append(self.profile.canonical_name)
+        if self.include_tools:
+            parts.append(f"+{','.join(self.include_tools)}")
+        if self.exclude_tools:
+            parts.append(f"-{','.join(self.exclude_tools)}")
+        return ";".join(parts)
+
+    def allowed_names(self, all_names: set[str]) -> set[str]:
+        unknown = sorted((set(self.include_tools) | set(self.exclude_tools)) - all_names)
+        if unknown:
+            raise ValueError(f"Unknown tool name(s): {', '.join(unknown)}")
+
+        if self.include_tools and not self.profile_explicit:
+            allowed = set(self.include_tools)
+        else:
+            allowed = self.profile.allowed_names(all_names) | set(self.include_tools)
+        allowed -= set(self.exclude_tools)
+        return allowed & all_names
+
+    def filter_tools(self, tools: list[Tool]) -> list[Tool]:
+        allowed = self.allowed_names({tool.name for tool in tools})
+        return [tool for tool in tools if tool.name in allowed]
+
+
+def parse_tool_selection(
+    profile_value: str | None = None,
+    *,
+    include_tools: str | Sequence[str] | None = None,
+    exclude_tools: str | Sequence[str] | None = None,
+    profile_explicit: bool | None = None,
+) -> ToolSelection:
+    """Parse profile plus optional include/exclude tool filters."""
+
+    explicit = (
+        profile_explicit
+        if profile_explicit is not None
+        else bool(profile_value and profile_value.strip())
+    )
+    return ToolSelection(
+        profile=parse_tool_profile(profile_value),
+        profile_explicit=explicit,
+        include_tools=parse_tool_names(include_tools),
+        exclude_tools=parse_tool_names(exclude_tools),
+    )
+
+
+def filter_tools(
+    tools: list[Tool],
+    profile: ToolProfile | ToolSelection,
+) -> list[Tool]:
     """Filter a discovered tool list while retaining registration order."""
 
     allowed = profile.allowed_names({tool.name for tool in tools})
     return [tool for tool in tools if tool.name in allowed]
 
 
-def profile_snapshot(tools: list[Tool], profile: ToolProfile) -> list[str]:
+def profile_snapshot(
+    tools: list[Tool],
+    profile: ToolProfile | ToolSelection,
+) -> list[str]:
     """Return a stable sorted tool-name snapshot for tests and diagnostics."""
 
     return sorted(tool.name for tool in filter_tools(tools, profile))

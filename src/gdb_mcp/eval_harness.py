@@ -354,3 +354,62 @@ async def run_all_scenarios(
         )
 
     return EvalReport(scenarios=results)
+
+
+async def compare_profiles(
+    profiles: tuple[str, ...] = ("full", "core"),
+    *,
+    fake_gdb_path: Path | None = None,
+) -> dict[str, Any]:
+    """Compare upfront `tools/list` schema cost plus core-compatible scenario cost."""
+
+    from .contract import normalize_tool_contract
+    from .lazy import list_proxy_tools
+
+    compatible_scenarios = tuple(
+        spec
+        for spec in SCENARIOS
+        if spec.name
+        in {"local_source_triage", "core_dump_triage", "unavailable_dependency"}
+    )
+    report = await run_all_scenarios(
+        fake_gdb_path=fake_gdb_path,
+        scenarios=compatible_scenarios,
+    )
+    scenario_bytes = sum(item.serialized_bytes for item in report.scenarios)
+    scenario_tokens = sum(item.estimated_tokens for item in report.scenarios)
+    scenario_calls = sum(item.tool_calls for item in report.scenarios)
+
+    comparison: list[dict[str, Any]] = []
+    for profile_name in profiles:
+        tools = await list_proxy_tools(profile_name)
+        schema_payload = {
+            "tools": [
+                normalize_tool_contract(
+                    tool.model_dump(mode="json", by_alias=True, exclude_none=True)
+                )
+                for tool in tools
+            ]
+        }
+        schema_measured = measure_response(schema_payload)
+        total_bytes = schema_measured.bytes + scenario_bytes
+        total_tokens = schema_measured.estimated_tokens + scenario_tokens
+        comparison.append(
+            {
+                "profile": profile_name,
+                "tool_count": len(tools),
+                "schema_bytes": schema_measured.bytes,
+                "schema_tokens": schema_measured.estimated_tokens,
+                "scenario_calls": scenario_calls,
+                "scenario_bytes": scenario_bytes,
+                "scenario_tokens": scenario_tokens,
+                "total_bytes": total_bytes,
+                "total_estimated_tokens": total_tokens,
+            }
+        )
+
+    return {
+        "ok": report.ok,
+        "scenarios": [item.name for item in compatible_scenarios],
+        "profiles": comparison,
+    }
