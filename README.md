@@ -1,7 +1,7 @@
 <!-- mcp-name: io.github.beacox/gdb-mcp -->
 
 <p align="center">
-  <img src="assets/logo.svg" alt="gdb-mcp logo" width="150">
+  <img src="https://raw.githubusercontent.com/BeaCox/gdb-mcp/main/assets/logo.svg" alt="gdb-mcp logo" width="150">
 </p>
 
 <h1 align="center">gdb-mcp</h1>
@@ -75,7 +75,7 @@ uv tool install beacox-gdb-mcp
 > The PyPI distribution is **`beacox-gdb-mcp`** (the older `gdb-mcp` name on PyPI
 > belongs to an unrelated package). The installed command is `gdb-mcp`.
 > For `uvx`, `pipx`, tagged Git, marketplace plugins, Docker, or Nix flake, see
-> [docs/INSTALL.md](docs/INSTALL.md).
+> [docs/INSTALL.md](https://github.com/BeaCox/gdb-mcp/blob/main/docs/INSTALL.md).
 
 ## Verify
 
@@ -146,16 +146,16 @@ disabled by default. Enable them explicitly with `gdb-mcp --unsafe` or
 On stdin EOF, `SIGTERM`, or `SIGKILL` of the proxy, `PR_SET_PDEATHSIG` and
 session process groups (`start_new_session=True` + `os.killpg`) terminate all
 spawned backend, GDB, and `gdbserver` processes without orphans. See
-[docs/TRANSPORTS.md](docs/TRANSPORTS.md) for HTTP mode, environment variables,
+[docs/TRANSPORTS.md](https://github.com/BeaCox/gdb-mcp/blob/main/docs/TRANSPORTS.md) for HTTP mode, environment variables,
 and shutdown details.
 
 ## Documentation
 
-- [Documentation Index](docs/README.md)
-- [Install & Client Setup](docs/INSTALL.md)
-- [Tool Reference (98 tools)](docs/TOOLS.md)
-- [Transports, CLI, Env Vars, & Shutdown](docs/TRANSPORTS.md)
-- [Debugging Workflows](docs/WORKFLOWS.md)
-- [Compatibility Matrix](docs/COMPATIBILITY.md)
-- [Testing & Benchmarks](docs/TESTING.md)
-- [Security Policy](SECURITY.md) | [Changelog](CHANGELOG.md) | [MCP Registry Manifest](server.json) | [Capability Metadata](gdb-mcp.meta.json)
+- [Documentation Index](https://github.com/BeaCox/gdb-mcp/blob/main/docs/README.md)
+- [Install & Client Setup](https://github.com/BeaCox/gdb-mcp/blob/main/docs/INSTALL.md)
+- [Tool Reference (98 tools)](https://github.com/BeaCox/gdb-mcp/blob/main/docs/TOOLS.md)
+- [Transports, CLI, Env Vars, & Shutdown](https://github.com/BeaCox/gdb-mcp/blob/main/docs/TRANSPORTS.md)
+- [Debugging Workflows](https://github.com/BeaCox/gdb-mcp/blob/main/docs/WORKFLOWS.md)
+- [Compatibility Matrix](https://github.com/BeaCox/gdb-mcp/blob/main/docs/COMPATIBILITY.md)
+- [Testing & Benchmarks](https://github.com/BeaCox/gdb-mcp/blob/main/docs/TESTING.md)
+- [Security Policy](https://github.com/BeaCox/gdb-mcp/blob/main/SECURITY.md) | [Changelog](https://github.com/BeaCox/gdb-mcp/blob/main/CHANGELOG.md) | [MCP Registry Manifest](https://github.com/BeaCox/gdb-mcp/blob/main/server.json) | [Capability Metadata](https://github.com/BeaCox/gdb-mcp/blob/main/gdb-mcp.meta.json)
